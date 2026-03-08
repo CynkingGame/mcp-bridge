@@ -610,6 +610,9 @@ module.exports = {
                     } else {
                         // 尝试获取自定义组件
                         compClass = cc.js.getClassByName(componentType);
+                        if (!compClass && cc[componentType]) {
+                            compClass = cc[componentType];
+                        }
                     }
 
                     if (!compClass) {
@@ -647,20 +650,36 @@ module.exports = {
                 break;
 
             case "remove":
-                if (!componentId) {
-                    if (event.reply) event.reply(new Error("必须提供组件 ID"));
+                if (!componentId && !componentType) {
+                    if (event.reply) event.reply(new Error("必须提供组件 ID 或组件类型(componentType)"));
                     return;
                 }
 
                 try {
                     // 查找并移除组件
                     let component = null;
-                    if (node._components) {
-                        for (let i = 0; i < node._components.length; i++) {
-                            if (node._components[i].uuid === componentId) {
-                                component = node._components[i];
-                                break;
+                    if (componentId) {
+                        if (node._components) {
+                            for (let i = 0; i < node._components.length; i++) {
+                                if (node._components[i].uuid === componentId) {
+                                    component = node._components[i];
+                                    break;
+                                }
                             }
+                        }
+                    } else if (componentType) {
+                        let compClass = null;
+                        if (componentType.startsWith("cc.")) {
+                            const className = componentType.replace("cc.", "");
+                            compClass = cc[className];
+                        } else {
+                            compClass = cc.js.getClassByName(componentType);
+                            if (!compClass && cc[componentType]) {
+                                compClass = cc[componentType];
+                            }
+                        }
+                        if (compClass) {
+                            component = node.getComponent(compClass);
                         }
                     }
 
@@ -679,9 +698,9 @@ module.exports = {
 
             case "update":
                 // 更新现有组件属性
-                if (!componentType) {
-                    // 如果提供了 componentId，可以只用 componentId
-                    // 但 Cocos 2.4 uuid 获取组件比较麻烦，最好还是有 type 或者遍历
+                if (!componentType && !componentId) {
+                    if (event.reply) event.reply(new Error("必须提供组件 ID 或组件类型"));
+                    return;
                 }
 
                 try {
@@ -707,6 +726,9 @@ module.exports = {
                             compClass = cc[className];
                         } else {
                             compClass = cc.js.getClassByName(componentType);
+                            if (!compClass && cc[componentType]) {
+                                compClass = cc[componentType];
+                            }
                         }
                         if (compClass) {
                             targetComp = node.getComponent(compClass);
@@ -1581,6 +1603,39 @@ module.exports = {
             if (event.reply) event.reply(null, result);
         } catch (e) {
             if (event.reply) event.reply(new Error(`序列化节点失败: ${e.message}`));
+        }
+    },
+
+    "save-prefab": function (event, args) {
+        try {
+            const editMode = Editor.require("scene://edit-mode");
+            if (editMode && editMode.curMode().name === "prefab") {
+                editMode.save((err) => {
+                    if (err) {
+                        if (event.reply) event.reply(new Error(err.message || err));
+                    } else {
+                        if (event.reply) event.reply(null, "预制体保存成功");
+                    }
+                });
+            } else {
+                if (event.reply) event.reply(new Error("当前不在预制体编辑模式中"));
+            }
+        } catch (e) {
+            if (event.reply) event.reply(new Error("保存预制体发生异常: " + e.message));
+        }
+    },
+
+    "close-prefab": function (event, args) {
+        try {
+            const editMode = Editor.require("scene://edit-mode");
+            if (editMode && editMode.curMode().name === "prefab") {
+                editMode.pop();
+                if (event.reply) event.reply(null, "已触发退出预制体编辑模式");
+            } else {
+                if (event.reply) event.reply(new Error("当前不在预制体编辑模式中"));
+            }
+        } catch (e) {
+            if (event.reply) event.reply(new Error("退出预制体模式发生异常: " + e.message));
         }
     },
 };

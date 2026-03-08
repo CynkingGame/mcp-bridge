@@ -133,11 +133,14 @@ Args: [你的项目所在盘符]:/[项目路径]/packages/mcp-bridge/src/mcp-pro
 - **参数**:
     - `url`: 场景资源路径，如 `db://assets/NewScene.fire`
 
-### 7. open_prefab
+### 7. open_prefab / save_prefab / close_prefab
 
-- **描述**: 在编辑器中打开指定的预制体文件进入编辑模式。这是一个异步操作，打开后请等待几秒。
+- **描述**: 预制体专用操作三部曲。
 - **参数**:
-    - `url`: 预制体资源路径，如 `db://assets/prefabs/Test.prefab`
+    - `open_prefab`: 需提供 `url` (如 `db://assets/prefabs/Test.prefab`), 将异步打开并进入编辑模式。
+    - `save_prefab`: 无需参数，保存当前预制体。
+    - `close_prefab`: 无需参数，彻底退出预制体编辑模式并返回原场景。
+- **重要提示**: 这三个工具操作会直接深入场景编辑器的底层并驱动真正的状态机（通过内部 `scene://edit-mode` 的真实模拟），行为与人类手动点击“保存”“退出”按钮100%一致。
 
 ### 8. create_node
 

@@ -346,6 +346,16 @@ const getToolsList = () => {
             inputSchema: { type: "object", properties: {} },
         },
         {
+            name: "save_prefab",
+            description: `保存当前正在编辑的预制体的修改（仅在 open_prefab 进入预制体编辑模式后使用）`,
+            inputSchema: { type: "object", properties: {} },
+        },
+        {
+            name: "close_prefab",
+            description: `退出预制体编辑模式，返回普通场景编辑状态`,
+            inputSchema: { type: "object", properties: {} },
+        },
+        {
             name: "get_scene_hierarchy",
             description: `获取当前场景的节点树结构（包含 UUID、名称、子节点数）。若要查询节点组件详情等，请使用 manage_components。`,
             inputSchema: {
@@ -1236,6 +1246,24 @@ module.exports = {
                 isSceneBusy = false;
                 addLog("info", "安全保存已完成。");
                 callback(null, "场景保存成功。");
+                break;
+
+            case "save_prefab":
+                isSceneBusy = true;
+                addLog("info", "调用场景脚本保存预制体...");
+                callSceneScriptWithTimeout("mcp-bridge", "save-prefab", {}, (err, res) => {
+                    isSceneBusy = false;
+                    callback(err, res);
+                });
+                break;
+
+            case "close_prefab":
+                isSceneBusy = true;
+                addLog("info", "调用场景脚本退出预制体模式...");
+                callSceneScriptWithTimeout("mcp-bridge", "close-prefab", {}, (err, res) => {
+                    isSceneBusy = false;
+                    callback(err, res);
+                });
                 break;
 
             case "get_scene_hierarchy":
