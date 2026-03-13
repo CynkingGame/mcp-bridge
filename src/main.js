@@ -2122,21 +2122,11 @@ CCProgram fs %{
 	 * @returns {boolean} 如果发生了新目录创建，返回 true
 	 */
 	/**
-	 * 安全访问父级目录 URL
-	 * @param {string} path db:// 资源路径
-	 */
-	_getDirUrl(path) {
-		const lastSlash = path.lastIndexOf("/");
-		if (lastSlash > 5) {
-			return path.substring(0, lastSlash);
-		}
-		return path;
-	},
-
-	/**
-	 * 安全创建资源 (V7 终极纯原生异步方案)
-	 * 彻底放弃使用 fs.mkdirSync() 加上 refresh()，因为会和 OS 文件监视器产生必然的微秒级时序竞态 (导致严重的 uuid/path collision)。
-	 * 放弃对于纹理贴图使用 Editor.assetdb.create()，因为它原生存在导入期间向上查询不到自身 UUID 的崩溃 Bug。
+	 * 安全创建资源 (V8 完美原子级联方案)
+	 * 从根源解决 Cocos 原生由于 API 缺陷导致的一系列并发时序和子资产提取错乱 Bug。
+	 * 策略：永远不去触碰物理项目文件夹里的 fs.mkdir。计算出缺失的深层树结构，
+	 * 在 OS Temp 文件夹构建整颗由缺失目录和最终文件组成的隔离树，最后通过
+	 * 原生的 Editor.assetdb.import 单次原子地把整个树吸入最底层的共有确切父节点。
 	 *
 	 * @param {string} path db:// 资源路径
 	 * @param {string|Buffer} content 文件内容
@@ -2144,76 +2134,69 @@ CCProgram fs %{
 	 * @param {Function} [postCreateModifier] 修改 Meta 的可选回调
 	 */
 	_safeCreateAsset(path, content, originalCallback, postCreateModifier = null) {
-		const dirUrl = this._getDirUrl(path);
 		const fileName = path.substring(path.lastIndexOf("/") + 1);
-		const lowerName = fileName.toLowerCase();
-		const isTexture = lowerName.endsWith(".png") || lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg");
+
+		let currentUrl = path.substring(0, path.lastIndexOf("/"));
+		let missingDirs = [];
+
+		// 1. 向上回溯，寻找 DB 中真实存在的最末端祖先目录
+		while (currentUrl !== "db://assets" && currentUrl !== "db://internal" && currentUrl !== "db://") {
+			if (Editor.assetdb.exists(currentUrl)) {
+				break;
+			}
+			missingDirs.unshift(currentUrl.substring(currentUrl.lastIndexOf("/") + 1));
+			currentUrl = currentUrl.substring(0, currentUrl.lastIndexOf("/"));
+		}
+
+		if (!Editor.assetdb.exists(currentUrl)) {
+			return originalCallback(`致命错误：最终回退的根目录都不存在： ${currentUrl}`);
+		}
+
+		// 2. 在系统的 Tmp 隔离区构建这颗完整的缺失树
+		const os = require("os");
+		const pathMod = require("path");
+		const fs = require("fs");
+
+		const tempBase = pathMod.join(os.tmpdir(), "mcp_v8_" + Date.now() + "_" + Math.floor(Math.random() * 1000));
+		let deepTempPath = tempBase;
+
+		// 累加拼接出所有的中间目录缺失层
+		for (let i = 0; i < missingDirs.length; i++) {
+			deepTempPath = pathMod.join(deepTempPath, missingDirs[i]);
+		}
+
+		// 在最深处建出最终的目标文件目录，再写入文件
+		try {
+			fs.mkdirSync(deepTempPath, { recursive: true });
+			const fileTempPath = pathMod.join(deepTempPath, fileName);
+			fs.writeFileSync(fileTempPath, content);
+		} catch (e) {
+			return originalCallback(`在临时隔离区写入文件失败: ${e.message}`);
+		}
+
+		// 3. 决定导入的目标：如果有缺失目录树，则导入该树枝的顶端；否则直接导入孤立的文件
+		const topImportTarget =
+			missingDirs.length > 0 ? pathMod.join(tempBase, missingDirs[0]) : pathMod.join(tempBase, fileName);
 
 		const doneCreate = (err, msg) => {
-			if (!Editor.App.focused) {
-				Editor.AssetDB.runDBWatch("on");
-			}
+			// 清理整个系统隔离区垃圾
+			try {
+				fs.rmdirSync(tempBase, { recursive: true });
+			} catch (e) {}
 			if (err) return originalCallback(err);
 			originalCallback(null, msg);
 		};
 
-		// 提前加锁：屏蔽一切外界对于文件系统的后台骚扰，所有读写都在下面的 DB 队列里严格线性发生
-		Editor.AssetDB.runDBWatch("off");
+		// 4. 发起完美的单行代码神迹：把缺失的整个断层直接用自带的最稳定的导入队列机制处理
+		// 此过程会自动接管 DB Watcher 的协调工作，不必再用 runDBWatch("off")
+		Editor.assetdb.import([topImportTarget], currentUrl, (impErr, results) => {
+			if (impErr) return doneCreate(`原生导入操作失败: ${impErr.message || impErr}`);
 
-		// [步骤 1] 利用 Editor.assetdb.create 内部原生的 _ensureDirSync() 完美功能，
-		// 创一个占位空文件以强制让引擎自动原子化安全级联建出父文件夹、配套 .meta 以及注册映射！
-		const dummyPath = dirUrl + "/.dummy_mcp_" + Date.now() + ".txt";
-
-		Editor.assetdb.create(dummyPath, "dummy", (err) => {
-			if (err) {
-				return doneCreate(`级联建立父目录树失败: ${err.message || err}`);
+			if (postCreateModifier) {
+				postCreateModifier(doneCreate);
+			} else {
+				doneCreate(null, `资源已安全原生导入: ${path}`);
 			}
-
-			// [步骤 2] 父目录生态环境已完美确立在 DB 中，无需多言，删掉这个脚手架。
-			Editor.assetdb.delete([dummyPath], (delErr) => {
-				if (delErr) addLog("warn", "清理临时占位文件失败: " + delErr);
-
-				// [步骤 3] 正式创建目标
-				if (isTexture) {
-					// 贴图特例：为了避开 create() 处理图片 sub-assets 找不到自身的致命原生 Bug，
-					// 我们巧妙改用 import()！将 Buffer 写到真实系统的 tmp，由引擎从外部纯天然导进来！
-					const os = require("os");
-					const pathMod = require("path");
-					const fs = require("fs");
-
-					const tempOSPath = pathMod.join(os.tmpdir(), "mcp_" + Date.now() + "_" + fileName);
-					try {
-						fs.writeFileSync(tempOSPath, content);
-					} catch (e) {
-						return doneCreate(`写入 OS 临时贴图失败: ${e.message}`);
-					}
-
-					Editor.assetdb.import([tempOSPath], dirUrl, (impErr, results) => {
-						try {
-							fs.unlinkSync(tempOSPath);
-						} catch (e) {}
-
-						if (impErr) return doneCreate(`纹理导入操作失败: ${impErr.message || impErr}`);
-
-						if (postCreateModifier) {
-							postCreateModifier(doneCreate);
-						} else {
-							doneCreate(null, `资源已安全导入: ${path}`);
-						}
-					});
-				} else {
-					// 常规资产 (脚本、材质)：没有图片那种子节点切割的隐患，直接最顺滑的 native create
-					Editor.assetdb.create(path, content, (createErr) => {
-						if (createErr) return doneCreate(`资源常规创建失败: ${createErr.message || createErr}`);
-
-						if (postCreateModifier) {
-							postCreateModifier(doneCreate);
-						} else {
-							doneCreate(null, `资源已创建: ${path}`);
-						}
-					});
-				}
-			});
 		});
 	},
 
