@@ -2116,12 +2116,6 @@ CCProgram fs %{
 	},
 
 	/**
-	 * 确保物理目录存在 (V6 修复)
-	 * 因为 Editor.assetdb.create 会因为父目录在物理路径不存在而报错，所以需要用 fs.mkdirSync 预先建立。
-	 * @param {string} dbUrl db:// 格式的资源路径
-	 * @returns {boolean} 如果发生了新目录创建，返回 true
-	 */
-	/**
 	 * 安全创建资源 (V8 完美原子级联方案)
 	 * 从根源解决 Cocos 原生由于 API 缺陷导致的一系列并发时序和子资产提取错乱 Bug。
 	 * 策略：永远不去触碰物理项目文件夹里的 fs.mkdir。计算出缺失的深层树结构，

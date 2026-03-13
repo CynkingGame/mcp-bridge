@@ -1,4 +1,4 @@
-# Implementation Plan: Fix AssetDB Directory Creation and UUID Collisions (V6)
+# Implementation Plan: Fix AssetDB Directory Creation and UUID Collisions (V8)
 
 ## Section 1: Architecture
 
@@ -8,8 +8,8 @@
 
 **Data Models & API Updates:**
 
-- **Added**: `_safeCreateAsset(path, content, originalCallback, postCreateModifier)` - A unified wrapper handling the `Editor.assetdb.create` lifecycle. Safely creates physical folders, disables the AssetDB Watcher to prevent sync collision, and properly handles a backend refresh callback post-creation.
-- **Removed**: `_ensureParentDir(dbUrl, done)` - The flawed V4 directory creation method based on creating empty files.
+- **Added**: `_safeCreateAsset(path, content, originalCallback, postCreateModifier)` - A unified V8 wrapper handling the safe creation sequence. Instead of risky physical directory generation within the project, it computes the deepest missing directory tree, constructs a dummy version in `os.tmpdir()`, populates the file, and triggers a single, atomic `Editor.assetdb.import()` to seamlessly integrate it into Cocos without OS-level race conditions.
+- **Removed**: `_ensureParentDirSync` and any direct `fs.mkdirSync` writing logic within the `assets` folder that triggered Watcher races.
 - **Modified Endpoints**:
     - `manageScript` (create)
     - `manageAsset` (create, move)
@@ -21,11 +21,8 @@
 
 ## Section 2: Step-by-Step
 
-- [x] [Backend] Remove the flawed `_ensureParentDir` function from `src/main.js`.
-- [x] [Backend] Implement the new `_safeCreateAsset` wrapper in `src/main.js` using `Editor.AssetDB.runDBWatch`.
-- [x] [Backend] Update `manageTexture/create` to use `_safeCreateAsset`, and insert its `loadMeta/saveMeta` logic into the `postCreateModifier` callback.
-- [x] [Backend] Update `manageAsset/create` and `manageAsset/move` to use `_safeCreateAsset` instead of `_ensureParentDir`.
-- [x] [Backend] Update `manageScript/create` to use `_safeCreateAsset` instead of `_ensureParentDir`.
-- [x] [Backend] Update `manageShader/create` and `manageMaterial/create` to use `_safeCreateAsset` instead of `_ensureParentDir`.
-- [x] [Backend] Update `sceneManagement/create` and `sceneManagement/duplicate` to use `_safeCreateAsset` instead of `_ensureParentDir`.
-- [x] [Backend] Update `prefabManagement/create` to use `_safeCreateAsset` instead of `_ensureParentDir`, invoking `fixPrefabRootFileId` via `postCreateModifier`.
+- [x] [Backend] Remove flawed manual directory creation functions (`_ensureParentDirSync`, `_getFsPath`) from `src/main.js`.
+- [x] [Backend] Implement the new V8 `_safeCreateAsset` wrapper utilizing `os.tmpdir()` isolation and `Editor.assetdb.import` atomic cascades.
+- [x] [Backend] Ensure `manageTexture/create` handles deep directory imports via `_safeCreateAsset` correctly avoiding sub-asset native bugs.
+- [x] [Backend] Verify all other endpoints (`manageAsset`, `manageScript`, `manageShader`, `manageMaterial`, `sceneManagement`, `prefabManagement`) utilize `_safeCreateAsset`.
+- [x] [Testing] Rigorous deep folder matrix test via MCP on Texture, Script, Material, and Shader.

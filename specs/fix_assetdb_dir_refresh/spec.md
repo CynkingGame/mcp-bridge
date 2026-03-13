@@ -1,93 +1,61 @@
-# Global Fix for AssetDB Directory Creation and UUID Collisions (V6)
+# Global Fix for AssetDB Directory Creation and UUID Collisions (V8 Atomic Cascade Import)
 
 ## Problem Description
 
-在 Cocos Creator (2.4.x) 中，当 MCP Bridge 尝试创建带有深层嵌套路径的各类资源（如脚本、材质、场景、预制体）时，频繁出现 `[db-task][sync-changes] uuid collision` 和 `path collision` 报错，导致资源导入报错或层级显示错乱，必须手动重启或刷新编辑器。
+在 Cocos Creator (2.4.x) 中，当 MCP Bridge 尝试创建带有深层嵌套路径的各类资源（如脚本、材质、场景、预制体）时，频繁出现 `[db-task][sync-changes] uuid collision` 和 `path collision` 报错，导致资源导入报错或层级显示错乱，甚至会强行在根目录 `db://assets/` 抛下孤儿节点，必须手动重启或刷新编辑器。
 
-经过对 `assetdb_folder_creation_analysis.md` 的深度总结，导致该问题的**核心原因是异步刷新引发的竞态条件**。此前，我们已经在 `manageTexture` 中引入了 V5 版本的局部修复（基于原生 `fs.mkdirSync` 并在关闭 DB Watcher 下创建资源），但代码库中的其他绝大部分资源管理操作（`manageAsset`, `manageScript`, `manageShader`, `manageMaterial`, `sceneManagement`, `prefabManagement`）仍然遗留使用着含有根本性缺陷的 V4 版本的辅助函数 `_ensureParentDir`。
-
-**旧版 (V4) 缺陷剖析**：
-
-- 它错误地使用 `Editor.assetdb.create(targetDirUrl, "")` 逐级创建目录。这种方式实际上只会创建出无扩展名的空文件，而非真正的文件夹。
-- 它在创建过程中未能关闭 DB Watcher。这不仅触发了底层任务竞态，还引发了并发的 `Editor.assetdb.refresh`，导致了大规模 UUID 冲突。
+这经历了长达 8 个版本的迭代。早期尝试 (V6 前) 试图用 Node.js 的物理 `fs.mkdirSync` 配合手动 `Editor.assetdb.refresh` 来规避原生 `Editor.assetdb.create` 无法建立跨级目录且含有内部 `sub-assets` (如 Texture) 不兼容的 Bug。但这引发了更严重的后果：**物理空间的文件变化与引擎后置的 DB Watcher 监视器发生了微秒级别的时序竞态 (Race Condition)**，导致双方同时尝试为刚出生的深层文件分配 UUID，最终撞库并瘫痪内部层级。
 
 ## Functional Requirements
 
-1. **统一全局目录创建策略**：彻底废弃基于 `Editor.assetdb.create` 的伪目录创建辅助类。全局采用原生 `fs.mkdirSync({ recursive: true })` 进行物理路径的预创建。
-2. **严格的环境隔离 (DB Watcher Pause)**：所有的内部写操作阶段（包含文件创建与附加属性写入）都必须在暂停快照监听 (`Editor.AssetDB.runDBWatch("off")`) 的状态下进行，防止 AssetDB 的底层自动扫描过早介入。
-3. **精准的时序补偿 (Refresh)**：只有在实际创建了新物理目录的情况下，才对受影响的最近一级已有父目录，在**回调的最后周期**触发一次 `Editor.assetdb.refresh` 操作，以安全地生成 `.meta` 并驱动前端 UI 的层级刷新。
-4. **统一的安全包装器**：提供高度内聚的统一接口，接管所有资源的创建底层调用，确保异步时序一致。
+1. **废弃物理建目录的骚扰**：绝对禁止直接在 `db://assets` 指向的物理工作空间内越过引擎使用 `fs` 创建任何文件或文件夹。
+2. **纯粹原生异步化处理**：为了彻底保证 UUID 生成的线性和一致性，所有的建立操作必须依赖引擎的单一任务队列来处理，哪怕需要我们外部进行巧妙伪装。
+3. **原生 Texture 子资产兼容**：建立时需要避开 `create` 的内置 Bug。
+4. **统一的安全包装器**：提供高度内聚的统一接口 `_safeCreateAsset`，接管所有资源的抽象创建生命周期。
 
-## Technical Implementation Details
+## Technical Implementation Details (V8 Solution)
 
 1. **清理陈旧代码**：
-    - 从 `src/main.js` 中彻底解耦并删除旧的 `_ensureParentDir(dbUrl, done)` 函数。
+    - 从 `src/main.js` 中彻底解耦并删除所有容易引起 DB 报错与平台路径错误的辅助函数：\_ensureParentDirSync 以及旧版的各种物理寻址探测逻辑。
 
-2. **新增统一的资源创建工具函数**：
-   在 `main.js` 中增加 `_safeCreateAsset` 统一封装物理建目录、闭锁 Watcher、新建文件、解锁 Watcher 和单次 Refresh 的完整操作周期：
+2. **新增统一的资源创建工具函数 (V8 架构)**：
+   在 `main.js` 中重构 `_safeCreateAsset`，这是一套堪称“曲线救国”的原子级联创建操作栈（Atomic Cascade Import）：
 
     ```javascript
     /**
-     * 安全创建资源，自动处理物理目录、DB Watcher 隔离与父目录刷新
-     * @param {string} path db:// 资源路径
-     * @param {string|Buffer} content 文件内容
-     * @param {Function} originalCallback 外层完毕回调 (err, msg)
-     * @param {Function} [postCreateModifier] 在关闭 Watcher 的隔离区内执行的额外元数据修改回调
+     * 安全创建资源 (V8 完美原子级联方案)
+     * 策略：永远不去触碰物理项目文件夹里的 fs.mkdir。计算出缺失的深层树结构，
+     * 在 OS Temp 文件夹构建整颗由缺失目录和最终文件组成的隔离树，最后通过
+     * 原生的 Editor.assetdb.import 单次原子地把整个树吸入最底层的共有确切父节点。
      */
     _safeCreateAsset(path, content, originalCallback, postCreateModifier = null) {
-        let hasNewDir = false;
-        try {
-            hasNewDir = this._ensureParentDirSync(path);
-        } catch (e) {
-            return originalCallback(`创建物理目录失败: ${e.message}`);
-        }
+        // 1. 向上回溯，寻找到 DB 中确切存在的最深“锚点母目录”
+        // ... (收集 missingDirs 缺失目录树) ...
 
-        const doneCreate = (err, msg) => {
-            if (!Editor.App.focused) {
-                Editor.AssetDB.runDBWatch("on");
-            }
-            if (err) return originalCallback(err);
+        // 2. 利用 Node.js 的 os.tmpdir() 开辟系统隔离垃圾箱
+        // 在该防侦测掩体中复刻出 `missingDir1/missingDir2/file` 这套树
+        // 并将 Buffer 数据完全写入
 
-            if (hasNewDir) {
-                const dirUrl = path.substring(0, path.lastIndexOf("/"));
-                addLog("info", `触发目录 ${dirUrl} 的刷新以补齐 Meta`);
-                Editor.assetdb.refresh(dirUrl, (refreshErr) => {
-                    if (refreshErr) addLog("warn", `刷新父目录失败: ${refreshErr}`);
-                    originalCallback(null, msg);
-                });
-            } else {
-                originalCallback(null, msg);
-            }
-        };
+        // 3. 选定导入点
+        // const topImportTarget = [基于临时区构建的最顶部确实目录或文件]
 
-        Editor.AssetDB.runDBWatch("off");
-        Editor.assetdb.create(path, content, (err) => {
-            if (err) return doneCreate(err);
-            if (postCreateModifier) {
-                postCreateModifier(doneCreate);
-            } else {
-                doneCreate(null, `资源已创建: ${path}`);
-            }
+        // 4. 发起单次原子级原生拖拽导入
+        // 此接口原本用于处理在编辑器外的所有手动拖拽行为，是 Cocos 最严密和包含所有级联自洽的任务管道。
+        Editor.assetdb.import([topImportTarget], currentUrl, (impErr, results) => {
+            // ... (清理临时垃圾并触发 postCreateModifier 元数据修改回调) ...
         });
     }
     ```
 
 3. **重构各模块的创建逻辑以使用统一抽象**：
-    - **`manageScript`** / **`manageAsset`** / **`manageShader`** / **`manageMaterial`** / **`sceneManagement` (create)**:
-      将原先包裹着的 `this._ensureParentDir` + `Editor.assetdb.create` / `refresh` 全部剥离，改为直接调用 `this._safeCreateAsset(path, content, callback, null)`。
-    - **`sceneManagement` (duplicate)**:
-      读取源场景对应的物理文件内容后，直接调用 `this._safeCreateAsset(targetPath, content, callback, null)`。
-    - **`prefabManagement` (create)**:
-      在 `_createPrefabViaSceneScript` 内完成组件序列化后，将原有的 `Editor.assetdb.create` 直接替换为调用 `this._safeCreateAsset`，并通过 `postCreateModifier` 注入 `fixPrefabRootFileId` 修复逻辑。
-    - **`manageTexture`**:
-      通过 `postCreateModifier` 剥离掉其内部的 `loadMeta` 和 `saveMeta` 逻辑传递给 `_safeCreateAsset`，同时享受统一的目录处理。
+    - **`manageScript`** / **`manageAsset`** / **`manageShader`** / **`manageMaterial`** / **`manageTexture`** / **`sceneManagement` (create)** / **`prefabManagement` (create)**:
+      全面切换使用该一元化的 `this._safeCreateAsset(path, content, callback, postCreateModifier)`。各级工具无需再关心复杂的竞态条件或层级错误。
 
 ## Edge Cases
 
-1. **多个不同工具的连发请求竞态**：
-    - 之前版本已确认 `batchExecute` 被重构成**严格串行执行**。
-    - 现版本的 `_safeCreateAsset` 将 `Editor.assetdb.refresh` 置于全链条响应回调的最末端节点。这意味着，一个创建操作只要在进行刷新，随后的创建任务即使排队，也会被完全阻塞。这种机制满足了最佳实践中的**方案 B：异步串行化链式刷新**要求，绝不会导致内部快速循环调用的覆写和碰撞。
-2. **Editor.App.focused 的兜底**：
-    - 依据 Cocos 本身 IPC 操作的标准规范 (`asset-db:create-asset`)，在包含焦点的环境下引擎内部能自主触发 Watcher 的恢复。我们的统一帮助类严格遵守该检查机制以保证环境状态复位安全。
-3. **保存并获取刚生成的 Meta 信息**：
-    - 如 `manageTexture` 修改 `border`（9-slice）等操作，此时刚刚经历了 `create` ，虽然在同构环境中可继续以 `postCreateModifier` 回溯。由于内存落盘延迟存在，它会保留现有的 `setTimeout 100`，等待 AssetDB 的文件处理流走完再执行 `loadMeta`，保障资源稳妥。
+1. **多格式文件区分导入**：
+    - 既然采用了原生的 `import` ，其能够根据文件后缀（如 `.effect`, `.ts`, `.png`）自动驱动对应类型的内部 Importer，不再发生 Texture 因为原生代码片段漏洞崩溃的问题。
+2. **性能与垃圾开销**：
+    - 通过使用 `os.tmpdir()`，我们在最快且无关系统权限的独立区域（通常对应 Windows 内存盘或 Temp）完成了拼图，且每次完成任务无论成败，在出栈时静默通过 `fs.rmdirSync` 抹收了所有垃圾，绝不残留。
+3. **修饰后处理回调**：
+    - 使用如修改 Texture 图片的边缘剪裁、设置 Prefab 的 root 信息等时，仍然传递给 `postCreateModifier`，并且使用 `setTimeout(..., 100)` 来应对因为 `import` 内部刚解析生成 `.meta` 时存在的一刹那磁盘系统锁，安全读取。
