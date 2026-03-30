@@ -485,11 +485,12 @@ const getToolsList = () => {
 		},
 		{
 			name: "update_node_transform",
-			description: `${globalPrecautions} 修改节点的坐标、缩放或颜色。执行前必须调用 get_scene_hierarchy 确保 node ID 有效。`,
+			description: `${globalPrecautions} 修改节点的坐标、缩放、颜色或显隐状态。执行前必须调用 get_scene_hierarchy 确保 node ID 有效。`,
 			inputSchema: {
 				type: "object",
 				properties: {
 					id: { type: "string", description: "节点 UUID" },
+					active: { type: "boolean", description: "节点的激活状态 (显隐)" },
 					x: { type: "number" },
 					y: { type: "number" },
 					rotation: { type: "number", description: "旋转角度" },
@@ -1682,7 +1683,7 @@ module.exports = {
 				this._safeCreateAsset(
 					scriptPath,
 					content ||
-						`const { ccclass, property } = cc._decorator;
+					`const { ccclass, property } = cc._decorator;
 
 @ccclass
 export default class NewScript extends cc.Component {
@@ -2324,7 +2325,7 @@ CCProgram fs %{
 			// 清理整个系统隔离区垃圾
 			try {
 				fs.rmdirSync(tempBase, { recursive: true });
-			} catch (e) {}
+			} catch (e) { }
 			if (err) return originalCallback(err);
 			originalCallback(null, msg);
 		};
@@ -2866,7 +2867,7 @@ CCProgram fs %{
 						} else {
 							props[key] = typeof val;
 						}
-					} catch (e) {}
+					} catch (e) { }
 				});
 				return { name, exists: true, props };
 			};

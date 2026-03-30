@@ -497,3 +497,11 @@ ps: 感谢 @亮仔😂 😁 🐔否？ 提供的反馈以及操作日志
   - 引入了方法探针检查(`typeof queryInfoByUrl === 'function'`) 决定是否调用。
   - 若探测到缺失，则实施安全降级处理：先行抽出资源的 UUID (`urlToUuid`)，再通过更为泛用的原生方法 `queryInfoByUuid` 完成请求闭环。
 - **效果**: 彻底清除了对资源查询时容易出现的各种空指针与未定义方法崩溃，同时修复完善了在知识库文档中的幻觉推断。
+
+## 节点变换增强与 Bug 修复 (2026-03-27)
+
+### 1. `update-node-transform` 支持 `active` 参数
+
+- **问题**: `update-node-transform` 中遗漏了对节点显隐 (`active`) 的参数处理，AI 无法直接修改节点的激活状态。
+- **修复**: 在 `src/scene-script.js` 的 `update-node-transform` 处理器中添加了对 `args.active` 的处理逻辑 (`node.active = !!args.active;`)。
+- **致谢**: 感谢社区245781780反馈并提供修复方案！
