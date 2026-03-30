@@ -484,3 +484,16 @@ ps: 感谢 @亮仔😂 😁 🐔否？ 提供的反馈以及操作日志
 ### 4. IPC 后处理情报反馈
 
 - **功能**: 组件及节点的构造结果不仅上报 UUID，同时通过 IPC 高效附上落点区域的解析报告（例如报告所依附的 Canvas 它的设计坐标与当前实时 Size），以便大语言模型即刻掌控全局视图坐标结构，减少后续调优瞎猜的次数。
+
+---
+
+## 主进程 API 健壮性与兼容防范 (2026-03-30)
+
+### 1. AssetDB 查询接口后备降级 (`manage_asset`)
+
+- **问题**: AI 调用 `manage_asset` 获取资源信息时，所依赖的 `Editor.assetdb.queryInfoByUrl` 被证实在不同编辑器的 IPC 代理层或特定版本中断言缺失，导致 `TypeError: Editor.assetdb.queryInfoByUrl is not a function` 报错使得获取流程阻断。
+- **修复**: 
+  - 引入了引擎对象级别的运行时防御拦截(`!Editor.assetdb`)。
+  - 引入了方法探针检查(`typeof queryInfoByUrl === 'function'`) 决定是否调用。
+  - 若探测到缺失，则实施安全降级处理：先行抽出资源的 UUID (`urlToUuid`)，再通过更为泛用的原生方法 `queryInfoByUuid` 完成请求闭环。
+- **效果**: 彻底清除了对资源查询时容易出现的各种空指针与未定义方法崩溃，同时修复完善了在知识库文档中的幻觉推断。

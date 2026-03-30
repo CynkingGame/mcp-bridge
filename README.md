@@ -201,7 +201,7 @@ Args: [你的项目所在盘符]:/[项目路径]/packages/mcp-bridge/src/mcp-pro
 
 ### 11. manage_asset
 
-- **描述**: 管理资源
+- **描述**: 管理资源 (包含对引擎大对象的空值保护以及底层 `get_info` 查询防崩溃 API 级联降级兼容处理)。
 - **参数**:
     - `action`: 操作类型（`create`, `delete`, `move`, `get_info`）
     - `path`: 资源路径，如 `db://assets/textures`

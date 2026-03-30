@@ -387,7 +387,7 @@ this._tasks = async.queue((task, callback) => {
 | 创建资源            | `Editor.assetdb.create()`         | 父目录必须存在，否则报错   |
 | 刷新目录            | `Editor.assetdb.refresh()`        | 路径不存在时会向上查找祖先 |
 | 查询 UUID           | `Editor.assetdb.urlToUuid()`      | 同步操作，直接读内存       |
-| 查询资源信息        | `Editor.assetdb.queryInfoByUrl()` | 异步，通过 IPC             |
+| 查询资源信息        | `Editor.assetdb.queryInfoByUrl()` | 异步，通过 IPC 组件调用。注意：该方法在主进程可能因版本断层缺失报错，强烈建议搭配使用 `urlToUuid()` 转向调用 `queryInfoByUuid(uuid)` 作为防御 fallback。 |
 
 > [!CAUTION]
 > **`create()` 不会自动创建父目录的 DB 注册**。虽然 `_ensureDirSync()` 会在磁盘上创建目录并注册到 DB，但如果你先用 `fs` 模块手动创建了目录再调用 `create()`，Asset-DB 可能不知道这些目录的存在。**正确做法是让 AssetDB 自己处理目录创建，或在创建后刷新父目录**。
@@ -423,20 +423,20 @@ graph TB
 
 #### 查询类 IPC（同步响应，`event.reply()`）
 
-| IPC 消息名 | 调用的 AssetDB API | 说明 |
-|-----------|-------------------|------|
-| `asset-db:exists` | `Editor.assetdb.exists(url)` | 检查资源是否存在 |
-| `asset-db:query-path-by-url` | `Editor.assetdb._fspath(url)` | db:// URL → 磁盘路径 |
-| `asset-db:query-uuid-by-url` | `Editor.assetdb.urlToUuid(url)` | db:// URL → UUID |
-| `asset-db:query-path-by-uuid` | `Editor.assetdb.uuidToFspath(uuid)` | UUID → 磁盘路径 |
-| `asset-db:query-url-by-uuid` | `Editor.assetdb.uuidToUrl(uuid)` | UUID → db:// URL |
-| `asset-db:query-info-by-uuid` | `Editor.assetdb.assetInfoByUuid(uuid)` | 查询资源完整信息 |
-| `asset-db:query-meta-info-by-uuid` | 手动组装 Meta 信息 | 返回 `{assetType, defaultType, assetUrl, assetPath, metaPath, json, ...}` |
-| `asset-db:deep-query` | `Editor.assetdb.deepQuery(cb)` | 查询所有资源树 |
-| `asset-db:query-assets` | `Editor.assetdb.queryAssets(pattern, types, cb)` | 按模式查询 |
-| `asset-db:query-mounts` | 直接返回 `_mounts` | 查询挂载点 |
-| `asset-db:query-watch-state` | `Editor.assetdb.getWatchState()` | 查询文件监视状态 |
-| `asset-db:explore` | `shell.showItemInFolder(fspath)` | 在文件管理器中显示 |
+| IPC 消息名                         | 调用的 AssetDB API                               | 说明                                                                      |
+| ---------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------- |
+| `asset-db:exists`                  | `Editor.assetdb.exists(url)`                     | 检查资源是否存在                                                          |
+| `asset-db:query-path-by-url`       | `Editor.assetdb._fspath(url)`                    | db:// URL → 磁盘路径                                                      |
+| `asset-db:query-uuid-by-url`       | `Editor.assetdb.urlToUuid(url)`                  | db:// URL → UUID                                                          |
+| `asset-db:query-path-by-uuid`      | `Editor.assetdb.uuidToFspath(uuid)`              | UUID → 磁盘路径                                                           |
+| `asset-db:query-url-by-uuid`       | `Editor.assetdb.uuidToUrl(uuid)`                 | UUID → db:// URL                                                          |
+| `asset-db:query-info-by-uuid`      | `Editor.assetdb.assetInfoByUuid(uuid)`           | 查询资源完整信息                                                          |
+| `asset-db:query-meta-info-by-uuid` | 手动组装 Meta 信息                               | 返回 `{assetType, defaultType, assetUrl, assetPath, metaPath, json, ...}` |
+| `asset-db:deep-query`              | `Editor.assetdb.deepQuery(cb)`                   | 查询所有资源树                                                            |
+| `asset-db:query-assets`            | `Editor.assetdb.queryAssets(pattern, types, cb)` | 按模式查询                                                                |
+| `asset-db:query-mounts`            | 直接返回 `_mounts`                               | 查询挂载点                                                                |
+| `asset-db:query-watch-state`       | `Editor.assetdb.getWatchState()`                 | 查询文件监视状态                                                          |
+| `asset-db:explore`                 | `shell.showItemInFolder(fspath)`                 | 在文件管理器中显示                                                        |
 
 #### 写操作类 IPC（异步回调）
 
@@ -446,40 +446,40 @@ graph TB
 ```javascript
 // 每个写操作 IPC 的标准模式（以 create-asset 为例）
 ipcMain.on("asset-db:create-asset", (event, url, data) => {
-    Editor.AssetDB.runDBWatch("off");         // 1. 关闭文件监视
-    Editor.assetdb.create(url, data, (err, results) => {
-        event.reply(err, results);            // 2. 异步回调返回结果
-    });
-    Editor.App.focused || Editor.AssetDB.runDBWatch("on"); // 3. 重开监视
+	Editor.AssetDB.runDBWatch("off"); // 1. 关闭文件监视
+	Editor.assetdb.create(url, data, (err, results) => {
+		event.reply(err, results); // 2. 异步回调返回结果
+	});
+	Editor.App.focused || Editor.AssetDB.runDBWatch("on"); // 3. 重开监视
 });
 ```
 
-| IPC 消息名 | 调用的 AssetDB API | 说明 |
-|-----------|-------------------|------|
-| `asset-db:create-asset` | `Editor.assetdb.create(url, data, cb)` | 创建资源 |
-| `asset-db:delete-assets` | `Editor.assetdb.delete(urls, cb)` | 删除资源（移到回收站） |
-| `asset-db:move-asset` | `Editor.assetdb.move(src, dest, cb)` | 移动/重命名资源 |
-| `asset-db:save-exists` | `Editor.assetdb.saveExists(url, data, cb)` | 覆写已存在资源 |
-| `asset-db:create-or-save` | `exists()` → `saveExists()` 或 `create()` | 智能创建或覆写 |
-| `asset-db:save-meta` | `Editor.assetdb.saveMeta(uuid, json, cb)` | 保存 Meta |
-| `asset-db:import-assets` | `Editor.assetdb.import(files, dest, cb)` | 导入外部文件 |
-| `asset-db:refresh` | `Editor.assetdb.refresh(url, cb)` | 刷新指定路径 |
-| `asset-db:attach-mountpath` | `Editor.assetdb.attachMountPath(name, cb)` | 挂载路径 |
-| `asset-db:unattach-mountpath` | `Editor.assetdb.unattachMountPath(name, cb)` | 卸载路径 |
+| IPC 消息名                    | 调用的 AssetDB API                           | 说明                   |
+| ----------------------------- | -------------------------------------------- | ---------------------- |
+| `asset-db:create-asset`       | `Editor.assetdb.create(url, data, cb)`       | 创建资源               |
+| `asset-db:delete-assets`      | `Editor.assetdb.delete(urls, cb)`            | 删除资源（移到回收站） |
+| `asset-db:move-asset`         | `Editor.assetdb.move(src, dest, cb)`         | 移动/重命名资源        |
+| `asset-db:save-exists`        | `Editor.assetdb.saveExists(url, data, cb)`   | 覆写已存在资源         |
+| `asset-db:create-or-save`     | `exists()` → `saveExists()` 或 `create()`    | 智能创建或覆写         |
+| `asset-db:save-meta`          | `Editor.assetdb.saveMeta(uuid, json, cb)`    | 保存 Meta              |
+| `asset-db:import-assets`      | `Editor.assetdb.import(files, dest, cb)`     | 导入外部文件           |
+| `asset-db:refresh`            | `Editor.assetdb.refresh(url, cb)`            | 刷新指定路径           |
+| `asset-db:attach-mountpath`   | `Editor.assetdb.attachMountPath(name, cb)`   | 挂载路径               |
+| `asset-db:unattach-mountpath` | `Editor.assetdb.unattachMountPath(name, cb)` | 卸载路径               |
 
 #### 事件转发类 IPC（主进程内部响应广播事件）
 
 这些处理器响应 AssetDB 广播出来的事件，执行**主进程侧**的副作用：
 
-| IPC 消息名 | 处理逻辑 |
-|-----------|----------|
-| `asset-db:asset-changed` | 如果是脚本类型，触发 `ProjectCompiler.compileScripts()` |
-| `asset-db:asset-uuid-changed` | 如果需要编译，触发 `ProjectCompiler.rebuild()` |
-| `asset-db:assets-created` | 编译新脚本，更新 `sceneList` |
-| `asset-db:assets-deleted` | 移除已删脚本，更新 `sceneList` |
-| `asset-db:assets-moved` | 调用 `ProjectCompiler.moveScripts()` 更新编译路径 |
-| `asset-db:script-import-failed` | 通知编译器单脚本编译失败 |
-| `asset-db:meta-backup` | 显示 Meta 备份对话框（可配置） |
+| IPC 消息名                      | 处理逻辑                                                |
+| ------------------------------- | ------------------------------------------------------- |
+| `asset-db:asset-changed`        | 如果是脚本类型，触发 `ProjectCompiler.compileScripts()` |
+| `asset-db:asset-uuid-changed`   | 如果需要编译，触发 `ProjectCompiler.rebuild()`          |
+| `asset-db:assets-created`       | 编译新脚本，更新 `sceneList`                            |
+| `asset-db:assets-deleted`       | 移除已删脚本，更新 `sceneList`                          |
+| `asset-db:assets-moved`         | 调用 `ProjectCompiler.moveScripts()` 更新编译路径       |
+| `asset-db:script-import-failed` | 通知编译器单脚本编译失败                                |
+| `asset-db:meta-backup`          | 显示 Meta 备份对话框（可配置）                          |
 
 ---
 
@@ -492,7 +492,7 @@ ipcMain.on("asset-db:create-asset", (event, url, data) => {
 ```javascript
 // 渲染进程中调用示例
 Editor.assetdb.create("db://assets/textures/icon.png", buffer, (err, results) => {
-    // results 来自主进程的 event.reply()
+	// results 来自主进程的 event.reply()
 });
 
 // 实际等价于：
@@ -502,27 +502,27 @@ Editor.Ipc.sendToMain("asset-db:create-asset", url, data, callback, -1);
 
 渲染进程代理 API 完整列表：
 
-| 代理方法 | 对应 IPC 消息 |
-|---------|--------------|
-| `Editor.assetdb.exists(url, cb)` | `asset-db:exists` |
-| `Editor.assetdb.queryPathByUrl(url, cb)` | `asset-db:query-path-by-url` |
-| `Editor.assetdb.queryUuidByUrl(url, cb)` | `asset-db:query-uuid-by-url` |
-| `Editor.assetdb.queryPathByUuid(uuid, cb)` | `asset-db:query-path-by-uuid` |
-| `Editor.assetdb.queryUrlByUuid(uuid, cb)` | `asset-db:query-url-by-uuid` |
-| `Editor.assetdb.queryInfoByUuid(uuid, cb)` | `asset-db:query-info-by-uuid` |
-| `Editor.assetdb.queryMetaInfoByUuid(uuid, cb)` | `asset-db:query-meta-info-by-uuid` |
-| `Editor.assetdb.deepQuery(cb)` | `asset-db:deep-query` |
-| `Editor.assetdb.queryAssets(pattern, types, cb)` | `asset-db:query-assets` |
-| `Editor.assetdb.create(url, data, cb)` | `asset-db:create-asset` |
-| `Editor.assetdb.move(src, dest, showDialog, cb)` | `asset-db:move-asset` |
-| `Editor.assetdb.delete(urls, cb)` | `asset-db:delete-assets` |
-| `Editor.assetdb.saveExists(url, data, cb)` | `asset-db:save-exists` |
-| `Editor.assetdb.createOrSave(url, data, cb)` | `asset-db:create-or-save` |
-| `Editor.assetdb.saveMeta(uuid, json, cb)` | `asset-db:save-meta` |
-| `Editor.assetdb.refresh(url, cb)` | `asset-db:refresh` |
-| `Editor.assetdb.import(files, dest, showFile, cb)` | `asset-db:import-assets` |
-| `Editor.assetdb.explore(url)` | `asset-db:explore` |
-| `Editor.assetdb.exploreLib(url)` | `asset-db:explore-lib` |
+| 代理方法                                           | 对应 IPC 消息                      |
+| -------------------------------------------------- | ---------------------------------- |
+| `Editor.assetdb.exists(url, cb)`                   | `asset-db:exists`                  |
+| `Editor.assetdb.queryPathByUrl(url, cb)`           | `asset-db:query-path-by-url`       |
+| `Editor.assetdb.queryUuidByUrl(url, cb)`           | `asset-db:query-uuid-by-url`       |
+| `Editor.assetdb.queryPathByUuid(uuid, cb)`         | `asset-db:query-path-by-uuid`      |
+| `Editor.assetdb.queryUrlByUuid(uuid, cb)`          | `asset-db:query-url-by-uuid`       |
+| `Editor.assetdb.queryInfoByUuid(uuid, cb)`         | `asset-db:query-info-by-uuid`      |
+| `Editor.assetdb.queryMetaInfoByUuid(uuid, cb)`     | `asset-db:query-meta-info-by-uuid` |
+| `Editor.assetdb.deepQuery(cb)`                     | `asset-db:deep-query`              |
+| `Editor.assetdb.queryAssets(pattern, types, cb)`   | `asset-db:query-assets`            |
+| `Editor.assetdb.create(url, data, cb)`             | `asset-db:create-asset`            |
+| `Editor.assetdb.move(src, dest, showDialog, cb)`   | `asset-db:move-asset`              |
+| `Editor.assetdb.delete(urls, cb)`                  | `asset-db:delete-assets`           |
+| `Editor.assetdb.saveExists(url, data, cb)`         | `asset-db:save-exists`             |
+| `Editor.assetdb.createOrSave(url, data, cb)`       | `asset-db:create-or-save`          |
+| `Editor.assetdb.saveMeta(uuid, json, cb)`          | `asset-db:save-meta`               |
+| `Editor.assetdb.refresh(url, cb)`                  | `asset-db:refresh`                 |
+| `Editor.assetdb.import(files, dest, showFile, cb)` | `asset-db:import-assets`           |
+| `Editor.assetdb.explore(url)`                      | `asset-db:explore`                 |
+| `Editor.assetdb.exploreLib(url)`                   | `asset-db:explore-lib`             |
 
 > [!NOTE]
 > 渲染进程中还可以通过 `Editor.assetdb.remote` 直接访问主进程的 `Editor.assetdb` 实例（Electron remote），但这种方式已经不推荐使用。
@@ -535,30 +535,30 @@ Editor.Ipc.sendToMain("asset-db:create-asset", url, data, callback, -1);
 
 #### Assets 面板 ([assets/panel/index.js](file:///c:/ProgramData/cocos/editors/Creator/2.4.15/resources/app/editor/builtin/assets/panel/index.js))
 
-| 事件 | 处理 |
-|------|------|
-| `asset-db:assets-created` | 向树形结构添加新节点，自动展开父目录并滚动到位 |
-| `asset-db:assets-moved` | 更新节点的名称和父级 |
-| `asset-db:assets-deleted` | 从树中移除节点，取消选中 |
-| `asset-db:asset-changed` | 高亮提示节点，更新纹理图标 |
-| `asset-db:asset-uuid-changed` | 更新节点的 UUID |
+| 事件                          | 处理                                           |
+| ----------------------------- | ---------------------------------------------- |
+| `asset-db:assets-created`     | 向树形结构添加新节点，自动展开父目录并滚动到位 |
+| `asset-db:assets-moved`       | 更新节点的名称和父级                           |
+| `asset-db:assets-deleted`     | 从树中移除节点，取消选中                       |
+| `asset-db:asset-changed`      | 高亮提示节点，更新纹理图标                     |
+| `asset-db:asset-uuid-changed` | 更新节点的 UUID                                |
 
 #### Inspector 面板 ([inspector/panel/index.js](file:///c:/ProgramData/cocos/editors/Creator/2.4.15/resources/app/editor/builtin/inspector/panel/index.js))
 
-| 事件 | 处理 |
-|------|------|
-| `asset-db:assets-moved` | 如果当前选中的资源被移动，强制刷新 Inspector |
-| `asset-db:asset-changed` | 如果当前选中的资源变化，强制刷新 Inspector |
-| `asset-db:asset-uuid-changed` | 更新当前检查的资源 UUID |
+| 事件                          | 处理                                         |
+| ----------------------------- | -------------------------------------------- |
+| `asset-db:assets-moved`       | 如果当前选中的资源被移动，强制刷新 Inspector |
+| `asset-db:asset-changed`      | 如果当前选中的资源变化，强制刷新 Inspector   |
+| `asset-db:asset-uuid-changed` | 更新当前检查的资源 UUID                      |
 
 #### Scene 面板 ([scene/panel/messages/asset-db.js](file:///c:/ProgramData/cocos/editors/Creator/2.4.15/resources/app/editor/builtin/scene/panel/messages/asset-db.js))
 
-| 事件 | 处理 |
-|------|------|
-| `asset-db:asset-changed` | `_Scene.assetChanged()` 更新场景中引用的资源 |
-| `asset-db:assets-moved` | `_Scene.assetsMoved()` 处理资源移动 |
-| `asset-db:assets-created` | `_Scene.assetsCreated()` 处理新资源 |
-| `asset-db:assets-deleted` | `_Scene.assetsDeleted()` 清理已删资源的引用 |
+| 事件                      | 处理                                         |
+| ------------------------- | -------------------------------------------- |
+| `asset-db:asset-changed`  | `_Scene.assetChanged()` 更新场景中引用的资源 |
+| `asset-db:assets-moved`   | `_Scene.assetsMoved()` 处理资源移动          |
+| `asset-db:assets-created` | `_Scene.assetsCreated()` 处理新资源          |
+| `asset-db:assets-deleted` | `_Scene.assetsDeleted()` 清理已删资源的引用  |
 
 #### Builder 面板、Project Settings 面板
 
@@ -585,7 +585,7 @@ Editor.Ipc.sendToMain("asset-db:create-asset", ...);
 ```javascript
 // scene-script.js (渲染进程) - 需要通过 IPC 或 Editor.assetdb 代理
 Editor.assetdb.queryUrlByUuid(uuid, (err, url) => {
-    // 这内部会发 IPC 到主进程
+	// 这内部会发 IPC 到主进程
 });
 ```
 

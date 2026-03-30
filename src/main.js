@@ -287,9 +287,9 @@ const getNewSceneTemplate = () => {
 			return Editor.Utils.UuidUtils.uuid();
 		} else {
 			// 兜底方案：生成类似 UUID 的随机字符串
-			return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+			return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
 				const r = (Math.random() * 16) | 0,
-					v = c === 'x' ? r : (r & 0x3) | 0x8;
+					v = c === "x" ? r : (r & 0x3) | 0x8;
 				return v.toString(16);
 			});
 		}
@@ -301,7 +301,7 @@ const getNewSceneTemplate = () => {
 			_name: "",
 			_objFlags: 0,
 			_native: "",
-			scene: { __id__: 1 }
+			scene: { __id__: 1 },
 		},
 		{
 			__type__: "cc.Scene",
@@ -320,7 +320,7 @@ const getNewSceneTemplate = () => {
 			_groupIndex: 0,
 			groupIndex: 0,
 			autoReleaseAssets: false,
-			_id: generateUuid()
+			_id: generateUuid(),
 		},
 		{
 			__type__: "cc.Node",
@@ -342,7 +342,7 @@ const getNewSceneTemplate = () => {
 			_is3DNode: false,
 			_groupIndex: 0,
 			groupIndex: 0,
-			_id: generateUuid()
+			_id: generateUuid(),
 		},
 		{
 			__type__: "cc.Node",
@@ -364,7 +364,7 @@ const getNewSceneTemplate = () => {
 			_is3DNode: false,
 			_groupIndex: 0,
 			groupIndex: 0,
-			_id: generateUuid()
+			_id: generateUuid(),
 		},
 		{
 			__type__: "cc.Camera",
@@ -386,7 +386,7 @@ const getNewSceneTemplate = () => {
 			_rect: { __type__: "cc.Rect", x: 0, y: 0, width: 1, height: 1 },
 			_renderStages: 1,
 			_alignWithScreen: true,
-			_id: generateUuid()
+			_id: generateUuid(),
 		},
 		{
 			__type__: "cc.Canvas",
@@ -397,7 +397,7 @@ const getNewSceneTemplate = () => {
 			_designResolution: { __type__: "cc.Size", width: 960, height: 640 },
 			_fitWidth: false,
 			_fitHeight: true,
-			_id: generateUuid()
+			_id: generateUuid(),
 		},
 		{
 			__type__: "cc.Widget",
@@ -422,8 +422,8 @@ const getNewSceneTemplate = () => {
 			_isAbsVerticalCenter: true,
 			_originalWidth: 0,
 			_originalHeight: 0,
-			_id: generateUuid()
-		}
+			_id: generateUuid(),
+		},
 	];
 	return JSON.stringify(sceneData);
 };
@@ -576,8 +576,20 @@ const getToolsList = () => {
 					},
 					layout: {
 						type: "string",
-						enum: ["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right", "full"],
-						description: "自动挂载 cc.Widget 并进行快捷排版适配。推荐绝大多数 UI 元素在创建时使用此参数替代手动指定坐标。",
+						enum: [
+							"center",
+							"top",
+							"bottom",
+							"left",
+							"right",
+							"top-left",
+							"top-right",
+							"bottom-left",
+							"bottom-right",
+							"full",
+						],
+						description:
+							"自动挂载 cc.Widget 并进行快捷排版适配。推荐绝大多数 UI 元素在创建时使用此参数替代手动指定坐标。",
 					},
 				},
 				required: ["name"],
@@ -1834,11 +1846,29 @@ export default class NewScript extends cc.Component {
 				break;
 
 			case "get_info":
-				Editor.assetdb.queryInfoByUrl(path, (err, info) => {
-					if (err) return callback(`查询失败: ${err.message}`);
-					if (!info) return callback(`找不到资源: ${path}`);
-					callback(null, info);
-				});
+				if (!Editor || !Editor.assetdb) {
+					return callback(`当前编辑器资产数据库对象为空，无法调用管理`);
+				}
+				if (!Editor.assetdb.exists(path)) {
+					return callback(`找不到资源: ${path}`);
+				}
+
+				if (typeof Editor.assetdb.queryInfoByUrl === 'function') {
+					Editor.assetdb.queryInfoByUrl(path, (err, info) => {
+						if (err) return callback(`查询失败: ${err.message}`);
+						if (!info) return callback(`找不到资源信息: ${path}`);
+						callback(null, info);
+					});
+				} else if (typeof Editor.assetdb.urlToUuid === 'function' && typeof Editor.assetdb.queryInfoByUuid === 'function') {
+					const uuid = Editor.assetdb.urlToUuid(path);
+					Editor.assetdb.queryInfoByUuid(uuid, (err, info) => {
+						if (err) return callback(`查询失败: ${err.message}`);
+						if (!info) return callback(`找不到资源信息: ${path}`);
+						callback(null, info);
+					});
+				} else {
+					return callback(`当前 Cocos 环境不支持资源详细信息查询`);
+				}
 				break;
 
 			default:
