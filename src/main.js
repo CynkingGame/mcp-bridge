@@ -1683,7 +1683,7 @@ module.exports = {
 				this._safeCreateAsset(
 					scriptPath,
 					content ||
-					`const { ccclass, property } = cc._decorator;
+						`const { ccclass, property } = cc._decorator;
 
 @ccclass
 export default class NewScript extends cc.Component {
@@ -1821,8 +1821,24 @@ export default class NewScript extends cc.Component {
 				// 但是它本质是一个 move 而不是 create。所以我们需要手动预创建目录并刷新。
 				let hasNewDir = false;
 				try {
-					hasNewDir = this._ensureParentDirSync(targetPath);
+					if (typeof this._ensureParentDirSync !== "function") {
+						let allKeys = [];
+						for (let k in Editor.assetdb) {
+							allKeys.push(k);
+						}
+						const dbMethods = allKeys.filter(
+							(k) => k.toLowerCase().includes("move") || k.toLowerCase().includes("dir"),
+						);
+						addLog("warn", `[2.4.10 Debug] \`this._ensureParentDirSync\` is missing.`);
+						addLog("warn", `[2.4.10 Debug] Editor.assetdb 相关 API: ${dbMethods.join(", ")}`);
+
+						// 在 2.4.10 中不存在此同步方法，跳过手动创建目录，直接让原有 move 接口处理看效果
+						hasNewDir = false;
+					} else {
+						hasNewDir = this._ensureParentDirSync(targetPath);
+					}
 				} catch (e) {
+					addLog("error", `[2.4.10 Debug] 创建物理目录异常: ${e.message}`);
 					return callback(`创建物理目录失败: ${e.message}`);
 				}
 
@@ -1854,13 +1870,16 @@ export default class NewScript extends cc.Component {
 					return callback(`找不到资源: ${path}`);
 				}
 
-				if (typeof Editor.assetdb.queryInfoByUrl === 'function') {
+				if (typeof Editor.assetdb.queryInfoByUrl === "function") {
 					Editor.assetdb.queryInfoByUrl(path, (err, info) => {
 						if (err) return callback(`查询失败: ${err.message}`);
 						if (!info) return callback(`找不到资源信息: ${path}`);
 						callback(null, info);
 					});
-				} else if (typeof Editor.assetdb.urlToUuid === 'function' && typeof Editor.assetdb.queryInfoByUuid === 'function') {
+				} else if (
+					typeof Editor.assetdb.urlToUuid === "function" &&
+					typeof Editor.assetdb.queryInfoByUuid === "function"
+				) {
 					const uuid = Editor.assetdb.urlToUuid(path);
 					Editor.assetdb.queryInfoByUuid(uuid, (err, info) => {
 						if (err) return callback(`查询失败: ${err.message}`);
@@ -1868,7 +1887,32 @@ export default class NewScript extends cc.Component {
 						callback(null, info);
 					});
 				} else {
-					return callback(`当前 Cocos 环境不支持资源详细信息查询`);
+					let allKeys = [];
+					for (let k in Editor.assetdb) {
+						allKeys.push(k);
+					}
+					const dbMethods = allKeys.filter(
+						(k) =>
+							k.toLowerCase().includes("info") ||
+							k.toLowerCase().includes("query") ||
+							k.toLowerCase().includes("uuid"),
+					);
+					addLog("warn", `[2.4.10 Debug] Editor.assetdb API (\`info|query|uuid\`): ${dbMethods.join(", ")}`);
+
+					try {
+						const uuid = Editor.assetdb.urlToUuid(path);
+						if (uuid && typeof Editor.assetdb.assetInfoByUuid === "function") {
+							const info = Editor.assetdb.assetInfoByUuid(uuid);
+							if (info) {
+								addLog("success", `[2.4.10 Debug] 成功通过 assetInfoByUuid 降级获取资源信息`);
+								return callback(null, info);
+							}
+						}
+					} catch (e) {
+						addLog("error", `[2.4.10 Debug] 退级调用 assetInfoByUuid 异常: ${e.message}`);
+					}
+
+					return callback(`当前 Cocos 环境不支持资源详细信息查询 (可用 API 已在控制台打印)`);
 				}
 				break;
 
@@ -2325,7 +2369,7 @@ CCProgram fs %{
 			// 清理整个系统隔离区垃圾
 			try {
 				fs.rmdirSync(tempBase, { recursive: true });
-			} catch (e) { }
+			} catch (e) {}
 			if (err) return originalCallback(err);
 			originalCallback(null, msg);
 		};
@@ -2867,7 +2911,7 @@ CCProgram fs %{
 						} else {
 							props[key] = typeof val;
 						}
-					} catch (e) { }
+					} catch (e) {}
 				});
 				return { name, exists: true, props };
 			};
