@@ -19,6 +19,30 @@
 			<ui-button id="btnClear" class="transparent">清空日志</ui-button>
 			<ui-button id="btnCopy" class="transparent">复制全部</ui-button>
 		</div>
+		<div class="connection-configs">
+			<div class="config-title-row">
+				<label class="section-title">MCP 连接配置</label>
+				<div id="connectionHint" class="config-hint"></div>
+			</div>
+			<div class="config-grid">
+				<div class="config-card">
+					<div class="config-card-header">
+						<span>HTTP 直连</span>
+						<ui-button id="btnCopyHttpConfig" class="transparent">复制</ui-button>
+					</div>
+					<div class="config-card-desc">支持 <code>mcpServers.xxx.url</code> 的客户端优先使用这一种。</div>
+					<textarea id="httpConfigSnippet" readonly spellcheck="false"></textarea>
+				</div>
+				<div class="config-card">
+					<div class="config-card-header">
+						<span>脚本代理</span>
+						<ui-button id="btnCopyStdioConfig" class="transparent">复制</ui-button>
+					</div>
+					<div class="config-card-desc">只支持 <code>command</code> / <code>stdio</code> 的客户端继续使用这一种。</div>
+					<textarea id="stdioConfigSnippet" readonly spellcheck="false"></textarea>
+				</div>
+			</div>
+		</div>
 		<div id="logConsole" class="log-view"></div>
 	</div>
 
@@ -187,6 +211,71 @@
 		-webkit-user-select: text;
 		user-select: text;
 		min-height: 0;
+	}
+
+	.connection-configs {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 6px 0 8px;
+		flex-shrink: 0;
+	}
+
+	.config-title-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+	}
+
+	.section-title {
+		margin: 0;
+		color: #d7dae0;
+		font-size: 12px;
+	}
+
+	.config-hint {
+		flex: 1;
+		font-size: 11px;
+		line-height: 1.5;
+		color: #7f8794;
+	}
+
+	.config-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 8px;
+	}
+
+	.config-card {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		padding: 8px;
+		border: 1px solid #3b4048;
+		background: #20242a;
+	}
+
+	.config-card-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 4px;
+		color: #d7dae0;
+		font-size: 12px;
+	}
+
+	.config-card-desc {
+		min-height: 34px;
+		margin-bottom: 6px;
+		color: #7f8794;
+		font-size: 11px;
+		line-height: 1.4;
+	}
+
+	#httpConfigSnippet,
+	#stdioConfigSnippet {
+		height: 132px;
+		font-size: 11px;
 	}
 
 	.log-item {

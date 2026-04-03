@@ -5,6 +5,9 @@
 	"author": "Firekula",
 	"main": "src/main.js",
 	"scene-script": "src/scene-script.js",
+	"scripts": {
+		"test": "node --test"
+	},
 	"main-menu": {
 		"MCP 桥接器/开启MCP设置面板": {
 			"message": "mcp-bridge:open-test-panel"

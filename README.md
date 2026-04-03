@@ -59,20 +59,36 @@
 
 ### 在 AI 编辑器（如 Cursor / VS Code）中配置
 
-如果你的 AI 编辑器提供的是 Type: command 或 Stdio 选项：
+插件现在同时支持以下两种接入方式：
+
+#### 方式一：HTTP 直连（推荐）
+
+如果你的 MCP 客户端支持 `mcpServers.xxx.url` 这类直连配置，优先使用本方式：
+
+```json
+{
+    "mcpServers": {
+        "cocos-creator": {
+            "url": "http://127.0.0.1:3456"
+        }
+    }
+}
+```
+
+说明：
+- 启动插件服务后，默认监听 `3456` 端口
+- 如果端口被占用，插件会自动尝试后续端口，面板中显示的实际端口即为应填写到 `url` 的端口
+
+#### 方式二：脚本代理（兼容只支持 stdio/command 的客户端）
+
+如果你的 AI 编辑器只提供 Type: `command` 或 `stdio`，继续使用 `mcp-proxy.js`：
 
 ```
 Command: node
 Args: [Cocos Creator 项目的绝对路径]/packages/mcp-bridge/src/mcp-proxy.js
 ```
 
-例如，在你的项目中，完整路径应该是：
-
-```
-Args: [你的项目所在盘符]:/[项目路径]/packages/mcp-bridge/src/mcp-proxy.js
-```
-
-### 或者添加 JSON 配置：
+也可以写成 JSON 配置：
 
 ```json
 {

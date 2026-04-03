@@ -7,6 +7,7 @@
 
 const fs = require("fs");
 const { IpcUi } = require("../src/IpcUi");
+const { buildConnectionConfigs } = require("../src/connection-config");
 
 Editor.Panel.extend({
     /**
@@ -44,6 +45,7 @@ Editor.Panel.extend({
                 const portInput = this.shadowRoot.querySelector("#portInput");
                 if (portInput) portInput.value = config.port;
             }
+            this.refreshConnectionConfigs(config.port);
         },
     },
 
@@ -74,6 +76,9 @@ Editor.Panel.extend({
             result: root.querySelector("#resultContent"),
             left: root.querySelector("#testLeftPanel"),
             resizer: root.querySelector("#testResizer"),
+            httpConfig: root.querySelector("#httpConfigSnippet"),
+            stdioConfig: root.querySelector("#stdioConfigSnippet"),
+            connectionHint: root.querySelector("#connectionHint"),
         };
 
         // 1. 初始化服务器状态与配置
@@ -82,6 +87,7 @@ Editor.Panel.extend({
                 els.port.value = data.config.port;
                 els.autoStart.value = data.autoStart;
                 this.updateUI(data.config.active);
+                this.refreshConnectionConfigs(data.config.port, data.config.active);
                 els.logView.innerHTML = "";
                 data.logs.forEach((l) => this.renderLog(l));
             }
@@ -124,6 +130,10 @@ Editor.Panel.extend({
             Editor.Ipc.sendToMain("mcp-bridge:toggle-server", parseInt(els.port.value));
         });
 
+        els.port.addEventListener("change", () => {
+            this.refreshConnectionConfigs(els.port.value);
+        });
+
         root.querySelector("#btnClear").addEventListener("confirm", () => {
             els.logView.innerHTML = "";
             Editor.Ipc.sendToMain("mcp-bridge:clear-logs");
@@ -132,6 +142,16 @@ Editor.Panel.extend({
         root.querySelector("#btnCopy").addEventListener("confirm", () => {
             require("electron").clipboard.writeText(els.logView.innerText);
             Editor.success("日志已复制到剪贴板");
+        });
+
+        root.querySelector("#btnCopyHttpConfig").addEventListener("confirm", () => {
+            require("electron").clipboard.writeText(els.httpConfig.value);
+            Editor.success("HTTP 连接配置已复制到剪贴板");
+        });
+
+        root.querySelector("#btnCopyStdioConfig").addEventListener("confirm", () => {
+            require("electron").clipboard.writeText(els.stdioConfig.value);
+            Editor.success("脚本代理配置已复制到剪贴板");
         });
 
         els.autoStart.addEventListener("change", (e) => {
@@ -336,5 +356,39 @@ Editor.Panel.extend({
         if (!btn) return;
         btn.innerText = active ? "停止" : "启动";
         btn.style.backgroundColor = active ? "#aa4444" : "#44aa44";
+        this.refreshConnectionConfigs(undefined, active);
+    },
+
+    getProxyScriptPath() {
+        return Editor.url("packages://mcp-bridge/src/mcp-proxy.js").replace(/\\/g, "/");
+    },
+
+    refreshConnectionConfigs(port, active) {
+        const root = this.shadowRoot;
+        if (!root) return;
+
+        const portInput = root.querySelector("#portInput");
+        const resolvedPort = parseInt(port || (portInput && portInput.value) || 3456, 10) || 3456;
+        const configs = buildConnectionConfigs({
+            port: resolvedPort,
+            proxyScriptPath: this.getProxyScriptPath(),
+        });
+
+        const httpConfig = root.querySelector("#httpConfigSnippet");
+        if (httpConfig) {
+            httpConfig.value = configs.http.snippet;
+        }
+
+        const stdioConfig = root.querySelector("#stdioConfigSnippet");
+        if (stdioConfig) {
+            stdioConfig.value = configs.stdio.snippet;
+        }
+
+        const hint = root.querySelector("#connectionHint");
+        if (hint) {
+            hint.textContent = active
+                ? `当前服务可通过 ${configs.http.url} 直连。若端口冲突导致自动换端口，这里的配置会随实际端口同步刷新。`
+                : `推荐优先使用 HTTP 直连配置；如果你的 MCP 客户端只支持 stdio/command，再使用 mcp-proxy.js 脚本代理。`;
+        }
     },
 });
