@@ -2,6 +2,7 @@
 
 ## [1.1.0] - 2026-04-05
 ### Feature
+- **截图工具**: 新增 `capture_editor_screenshot` 工具，可以通过向编辑器发送缩放 IPC `scene:init-scene-view` 后截图，为 AI 提供全局场景搭建反馈机制。
 - **AI 客户端自动化接入**: 新增一键注入 MCP Server 配置到多个主流 AI 客户端（Claude Desktop, Cline, Roo Code, Trae 等）的功能，支持全局及工作区级别的智能探测与配置分发。
 
 ### Refactor

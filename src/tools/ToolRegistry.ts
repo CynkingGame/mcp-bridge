@@ -557,6 +557,14 @@ export const getToolsList = () => {
 			},
 		},
 		{
+			name: "capture_editor_screenshot",
+			description: `捕获当前编辑器窗口和场景视图的截图。返回 Base64 格式的 WebP 图像字符串。用于在需要对场景情况有视觉掌握时使用。`,
+			inputSchema: {
+				type: "object",
+				properties: {},
+			},
+		},
+		{
 			name: "find_references",
 			description: `查找当前场景中引用了指定节点或资源的所有位置。返回引用所在节点、组件类型、属性名等详细信息。支持查找节点引用（cc.Node）和资源引用（cc.Prefab, cc.SpriteFrame, sp.SkeletonData 等）。`,
 			inputSchema: {

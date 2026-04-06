@@ -192,7 +192,60 @@ export class ToolDispatcher {
 		if (ToolDispatcher.isSceneBusy && (name === "save_scene" || name === "create_node")) {
 			return callback("编辑器正忙（正在处理场景），请稍候。");
 		}
-		switch (name) {
+				switch (name) {
+			case "capture_editor_screenshot":
+				ToolDispatcher.isSceneBusy = true;
+				
+				// 让编辑器的 Scene 视图居中并调整缩放看全景
+								// 让编辑器的 Scene 视图居中（修复 init-scene-view 找不到的问题）
+				Editor.Ipc.sendToPanel("scene", "scene:query-hierarchy", (err, sceneId, hierarchy) => {
+					if (!err && hierarchy && hierarchy.children && hierarchy.children.length > 0) {
+						const rootChild = hierarchy.children.find((c) => c.name === "Canvas") || hierarchy.children[0];
+						if (rootChild) {
+							Editor.Ipc.sendToPanel("scene", "scene:center-nodes", [rootChild.id]);
+						}
+					}
+				});
+				
+				// 给予编辑器 500ms 刷新并完成视口相机动画
+				setTimeout(() => {
+					try {
+						const win = Editor.Window.main.nativeWin;
+						if (!win || !win.isVisible()) {
+							ToolDispatcher.isSceneBusy = false;
+							return callback("编辑器主窗口在后台或被最小化，无法截图，请先唤醒。");
+						}
+						
+						let isResolved = false;
+						const resolveCallback = (err, data) => {
+							if (isResolved) return;
+							isResolved = true;
+							ToolDispatcher.isSceneBusy = false;
+							callback(err, data);
+						};
+						
+						// 安全超时防止死锁
+						setTimeout(() => { resolveCallback("Editor screenshot API timed out.", null); }, 5000);
+
+						try {
+							const p = win.webContents.capturePage();
+							if (p && typeof p.then === 'function') {
+								p.then(image => resolveCallback(null, image.toDataURL()))
+								 .catch(e => resolveCallback(`Promise Screenshot error: ${e.message}`, null));
+							} else {
+								win.capturePage((image) => resolveCallback(null, image.toDataURL()));
+							}
+						} catch(err) {
+							// 降级尝试回调模式
+							win.capturePage((image) => resolveCallback(null, image.toDataURL()));
+						}
+					} catch(e) {
+						ToolDispatcher.isSceneBusy = false;
+						callback(`截图失败: ${e.message}`);
+					}
+				}, 500);
+				break;
+
 			case "get_selected_node":
 				const ids = Editor.Selection.curSelection("node");
 				callback(null, ids);
