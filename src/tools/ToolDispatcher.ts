@@ -517,6 +517,18 @@ export class ToolDispatcher {
 				break;
 			}
 
+			case "build_project":
+				Editor.Ipc.sendToMain("mcp-bridge:build-project", args, (err, state) => {
+					callback(err, state);
+				});
+				break;
+
+			case "get_project_info":
+				Editor.Ipc.sendToMain("mcp-bridge:get-project-info", args, (err, info) => {
+					callback(err, info);
+				});
+				break;
+
 			default:
 				callback(`Unknown tool: ${name}`);
 				break;

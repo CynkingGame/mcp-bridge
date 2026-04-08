@@ -6,6 +6,7 @@
 - **AI 客户端自动化接入**: 新增一键注入 MCP Server 配置到多个主流 AI 客户端（Claude Desktop, Cline, Roo Code, Trae 等）的功能，支持全局及工作区级别的智能探测与配置分发。
 
 ### Refactor
+
 - **核心架构重构**: 将原生 JavaScript 代码升级为 TypeScript，并加入 `esbuild` 与 `tsc` 进行现代化的分发打包编译，产物统一输出至 `dist/` 目录。
 - **配置声明迁移**: 补齐 `tsconfig.json` 与外围依赖的类型定义入口 `globals.d.ts`，为长期维护奠定全类型智能提示基础。
 - **模块化拆分**: 完成长期累积的 `main.js` 巨无霸逻辑瘦身，将庞大的工具阵列硬编码（`getToolsList`）迁移为独立的 `tools/ToolRegistry.ts`，主进程将只专注于拓展生命周期及跨进程请求派发。
@@ -14,3 +15,9 @@
 
 ### Fixed
 - **组件系统鲁棒性升级**: 增强 `manage_components`，加入自动对 `cc.BoxCollider2D`、`cc.UITransform` 等 3.x 命名幻觉词条的定向修复防暴词典；拦截 `cc.Widget` 等唯一组件带来的软拒报错引发的二次空指针解析崩溃，自动转换为覆盖重用模式，保障全流程可用性。
+## [1.2.0] - 最新
+### Feature
+- **项目构建闭环**: 新增 `build_project` MCP 工具，首次打通大模型驱动 Cocos Creator 2.4.x 直接触发 `Editor.Builder.build` 进行真机或 Web 项目的端到端编译。
+  > _核心防线补丁_：完美解决 Cocos 底层未设置默认启动场景时的打包静默崩溃。现已引入 `Editor.assetdb` 深层接管：若面板空置 `startScene`，将全自动提取库中首个 `.fire` 进行智能组装，绝对确保一键构建可靠性。同时支持了 `project.json` 中 `excluded-modules` 的自动同步。
+- **获取宏观工程信息**: 新增 `get_project_info` MCP 工具，使 AI Client 可以全局知悉当前工程目录、引擎版本号以及运行时激活的 Scene UUID，以此做出更准确的环境策略决策。
+- **项目管理可视化**: 针对 MCP Client 难以观察项目构建状况的痛点，在控制台入口页面增加并抽离专门的「项目操作」子级配置和日志调试台。

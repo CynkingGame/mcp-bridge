@@ -288,6 +288,82 @@ export = {
 			} catch (e) {
 				if (event.reply) event.reply(new Error(e.message));
 			}
+		},
+
+		"build-project"(event, args) {
+			Editor.log(`[mcp-bridge] 接收到构建请求 IPC，平台: ${args.platform}`);
+			Editor.Ipc.sendToMain('builder:query-build-options', (err, options) => {
+				if (err) {
+					Editor.warn(`[mcp-bridge] 查询构建选项失败: ${err}`);
+					if (event.reply) event.reply(err, null);
+					return;
+				}
+				Editor.log(`[mcp-bridge] 成功获取默认构建配置，准备发起 builder:start-task`);
+				
+				const continueBuild = (startSceneUuid) => {
+					let scenes = options.scenes || [];
+					
+					// 核心校验补丁：Cocos 发起构建前会强制检测 scenes.indexOf(startScene) !== -1
+					if (scenes.indexOf(startSceneUuid) === -1) {
+						scenes.push(startSceneUuid);
+					}
+					
+					const targetPlatform = args.platform || 'web-mobile';
+					const destPath = require('path').join(Editor.Project.path, 'build', targetPlatform);
+
+					// 抓取被剔除的模块，参照官方 adapter 防御
+					let excludedModules = options.excludedModules || [];
+					try {
+						const projJson = JSON.parse(require('fs').readFileSync(require('path').join(Editor.Project.path, 'settings', 'project.json'), 'utf8'));
+						if (projJson['excluded-modules']) {
+							excludedModules = projJson['excluded-modules'];
+						}
+					} catch(e) {}
+
+					let buildOptions = Object.assign({}, options, {
+						platform: targetPlatform,
+						actualPlatform: targetPlatform,
+						debug: !!args.debug,
+						dest: destPath,
+						scenes: scenes,
+						startScene: startSceneUuid,
+						excludedModules: excludedModules
+					});
+
+					Editor.log(`[mcp-bridge] 开始构建项目，导出 ${targetPlatform} 包到 ${destPath}`);
+					Editor.log(`[mcp-bridge] 最终防御型 StartTask 参数: startScene=${startSceneUuid}, scenes.length=${scenes.length}`);
+					
+					Editor.Ipc.sendToMain('builder:start-task', 'build', buildOptions, (err2, result) => {
+						Editor.log(`[mcp-bridge] 构建任务完毕回调 err=${err2}`);
+					});
+					
+					if (event.reply) event.reply(null, { status: "building", platform: targetPlatform, dest: destPath });
+				};
+
+				// 如果面板未设置起始场景，导致返回空字符串，主动查库兜底
+				if (!options.startScene || options.startScene.trim() === "") {
+					Editor.log("[mcp-bridge] 智能补丁：项目未配置初始场景，正在自动抓取库中第一个 .fire 作为构建起点...");
+					Editor.assetdb.queryAssets('db://assets/**/*.fire', 'scene', (e, assetInfos) => {
+						if (!e && assetInfos && assetInfos.length > 0) {
+							continueBuild(assetInfos[0].uuid);
+						} else {
+							Editor.warn("[mcp-bridge] 严重警告：工程中未检索到任何 .fire 场景，将退级提交空 UUID...");
+							continueBuild("");
+						}
+					});
+				} else {
+					continueBuild(options.startScene);
+				}
+			});
+		},
+
+		"get-project-info"(event) {
+			const info = {
+				path: Editor.Project.path,
+				version: Editor.App.version,
+				openScene: Editor.currentSceneUuid
+			};
+			if (event.reply) event.reply(null, info);
 		}
 	},
 

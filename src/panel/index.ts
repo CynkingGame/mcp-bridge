@@ -58,28 +58,14 @@ Editor.Panel.extend({
             autoStart: root.querySelector("#autoStartCheck"),
             logView: root.querySelector("#logConsole"),
             tabMain: root.querySelector("#tabMain"),
-            tabTest: root.querySelector("#tabTest"),
-            tabIpc: root.querySelector("#tabIpc"),
             tabConfig: root.querySelector("#tabConfig"),
             panelMain: root.querySelector("#panelMain"),
-            panelTest: root.querySelector("#panelTest"),
-            panelIpc: root.querySelector("#panelIpc"),
             panelConfig: root.querySelector("#panelConfig"),
             mcpClientSelect: root.querySelector("#mcpClientSelect"),
             mcpConfigStatus: root.querySelector("#mcpConfigStatus"),
             btnRefreshMcp: root.querySelector("#btnRefreshMcp"),
             btnInjectMcp: root.querySelector("#btnInjectMcp"),
             btnInjectAll: root.querySelector("#btnInjectAll"),
-            toolName: root.querySelector("#toolName"),
-            toolParams: root.querySelector("#toolParams"),
-            toolDescription: root.querySelector("#toolDescription"),
-            toolsList: root.querySelector("#toolsList"),
-            testBtn: root.querySelector("#testBtn"),
-            listBtn: root.querySelector("#listToolsBtn"),
-            clearBtn: root.querySelector("#clearTestBtn"),
-            result: root.querySelector("#resultContent"),
-            left: root.querySelector("#testLeftPanel"),
-            resizer: root.querySelector("#testResizer"),
         };
 
         // 1. 初始化服务器状态与配置
@@ -97,15 +83,13 @@ Editor.Panel.extend({
 
         // 2. 标签页切换逻辑
         const switchTab = (activeTab, activePanel) => {
-            [els.tabMain, els.tabTest, els.tabIpc, els.tabConfig].forEach(t => { if(t) t.classList.remove("active"); });
-            [els.panelMain, els.panelTest, els.panelIpc, els.panelConfig].forEach(p => { if(p) p.classList.remove("active"); });
+            [els.tabMain, els.tabConfig].forEach(t => { if(t) t.classList.remove("active"); });
+            [els.panelMain, els.panelConfig].forEach(p => { if(p) p.classList.remove("active"); });
             if (activeTab) activeTab.classList.add("active");
             if (activePanel) activePanel.classList.add("active");
         };
 
         if (els.tabMain) els.tabMain.addEventListener("confirm", () => switchTab(els.tabMain, els.panelMain));
-
-
 
         if (els.tabConfig) {
             els.tabConfig.addEventListener("confirm", () => {
@@ -153,8 +137,6 @@ Editor.Panel.extend({
                 this.renderMcpClientStatus(els);
             });
         }
-
-
     },
 
 

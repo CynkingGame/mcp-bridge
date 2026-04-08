@@ -580,5 +580,22 @@ export const getToolsList = () => {
 				required: ["targetId"],
 			},
 		},
+		{
+			name: "build_project",
+			description: `${globalPrecautions} 构建并导出 Cocos 项目。通过 Editor.Builder.build 实现。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					platform: { type: "string", description: "构建平台，如 web-mobile" },
+					debug: { type: "boolean", description: "是否构建调试版" },
+				},
+				required: ["platform"],
+			},
+		},
+		{
+			name: "get_project_info",
+			description: `获取当前项目的宏观信息，例如引擎版本、根目录、当前打开的场景等。`,
+			inputSchema: { type: "object", properties: {} },
+		},
 	];
 };

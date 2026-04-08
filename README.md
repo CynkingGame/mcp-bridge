@@ -33,6 +33,8 @@
 - **属性保护**: 组件核心属性黑名单机制，防止 AI 篡改 `node`/`uuid` 等引用导致崩溃
 - **AI 容错**: 参数别名映射（`operation`→`action`、`save`→`update`/`write`），兼容大模型幻觉
 - **引用查找**: 查找场景中所有引用了指定节点或资源的位置，支持 Texture2D → SpriteFrame 子资源自动解析
+- **项目构建**: 一键触发 Cocos 原生 `Editor.Builder` 构建产物（内置智能防闪退兜底机制）
+- **工程信息**: 用于拉取当前活跃的编辑器级状态（版本号、根目录、当前打开的场景 UUID）
 
 ## 安装与使用
 
@@ -292,6 +294,16 @@ mcp-bridge/
 
 - **描述**: 创建场景文件 / 将场景节点保存为预制体
 - **参数**: `sceneName` / `nodeId` + `prefabName`
+
+### 27. build_project
+
+- **描述**: 触发编辑器内置打包构建管线（具备空场景容错、剔除引擎模块白名单同步保护）
+- **参数**: `platform` (例如 web-mobile), `debug`
+
+### 28. get_project_info
+
+- **描述**: 获取当前激活的编辑器环境数据
+- **参数**: 无（返回 `path`, `version`, `openScene` 状态）
 
 ## 开发指南
 
