@@ -1,3 +1,5 @@
+import { AutoNineSlicePolicy } from "./AutoNineSlice";
+
 export const UI_LAYOUT_NAMES = [
 	"center",
 	"top",
@@ -46,6 +48,7 @@ export interface UiPolicyConfig {
 			tolerance: number;
 		};
 	};
+	autoNineSlice?: Partial<AutoNineSlicePolicy>;
 	presets: Record<string, UiPresetConfig>;
 }
 
@@ -105,6 +108,14 @@ const DEFAULT_UI_POLICY: UiPolicyConfig = {
 			enabled: true,
 			preset: "screen-root",
 			tolerance: 2,
+		},
+	},
+	autoNineSlice: {
+		enabled: false,
+		triggerOnSpriteAssignment: true,
+		rules: [],
+		state: {
+			processed: {},
 		},
 	},
 	presets: {

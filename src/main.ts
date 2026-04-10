@@ -2,6 +2,7 @@ import { HttpServer } from './core/HttpServer';
 import { McpRouter } from './core/McpRouter';
 import { Logger } from './core/Logger';
 import { IpcManager } from './IpcManager';
+import { AutoNineSliceService } from "./core/AutoNineSliceService";
 declare const Editor: any;
 
 export = {
@@ -130,6 +131,21 @@ export = {
 			this.getProfile().set("auto-start", value);
 			this.getProfile().save();
 			Logger.info(`自动启动已设置为: ${value}`);
+		},
+		"auto-ensure-nine-slice-for-asset"(event, args) {
+			const uuid = args && args.uuid;
+			AutoNineSliceService.ensureForAssignedAsset(uuid, (err, result) => {
+				if (err) {
+					Logger.warn(`[auto-nine-slice] ${err}`);
+				} else if (result && result.status === "updated") {
+					Logger.info(
+						`[auto-nine-slice] 已自动配置 ${result.textureName || result.textureUrl} -> [${result.border.join(", ")}]`,
+					);
+				}
+				if (event && event.reply) {
+					event.reply(err, result);
+				}
+			});
 		},
 
 		"inspect-apis"() {

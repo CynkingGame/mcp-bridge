@@ -2,6 +2,7 @@
 "use strict";
 import { resolveCreateNodePolicy, resolveNamedUiPreset, resolvePrefabRootPolicy } from "./utils/UiPolicy";
 import { validateUiTree } from "./utils/UiPolicyValidation";
+import { resolvePreferredSpriteSizeMode } from "./utils/AutoNineSlice";
 
 /**
  * 更加健壮的节点查找函数，支持解压后的 UUID
@@ -123,6 +124,104 @@ const applyLayoutToWidget = (widget, layout) => {
             widget.isAlignRight = true;
             break;
     }
+};
+
+const getSpriteFrameUuid = (spriteFrame) => {
+    if (!spriteFrame) return null;
+    return spriteFrame._uuid || spriteFrame._rawFilesUuid || null;
+};
+
+const collectCurrentSpriteAssetUuids = () => {
+    const collected = new Set();
+    const addSpriteFrame = (spriteFrame) => {
+        const uuid = getSpriteFrameUuid(spriteFrame);
+        if (uuid) {
+            collected.add(uuid);
+        }
+    };
+    const visit = (node) => {
+        if (!node) return;
+        const sprite = node.getComponent(cc.Sprite);
+        if (sprite) {
+            addSpriteFrame(sprite.spriteFrame);
+        }
+        const button = node.getComponent(cc.Button);
+        if (button) {
+            ["normalSprite", "pressedSprite", "hoverSprite", "disabledSprite"].forEach((key) => {
+                addSpriteFrame(button[key]);
+            });
+        }
+        node.children.forEach((child) => visit(child));
+    };
+    const scene = cc.director.getScene();
+    if (scene) {
+        visit(scene);
+    }
+    return Array.from(collected);
+};
+
+const extractTextureUrl = (assetUrl) => {
+    if (!assetUrl || typeof assetUrl !== "string") return null;
+    const matched = assetUrl.match(/^(db:\/\/.+?\.(png|jpg|jpeg|webp))/i);
+    return matched ? matched[1] : assetUrl;
+};
+
+const readSpriteAssetMetaInfo = (uuid) => {
+    if (!uuid || !Editor || !Editor.assetdb) {
+        return null;
+    }
+    try {
+        const sourceUrl =
+            (Editor.assetdb.remote && Editor.assetdb.remote.uuidToUrl && Editor.assetdb.remote.uuidToUrl(uuid)) ||
+            Editor.assetdb.uuidToUrl(uuid);
+        if (!sourceUrl) {
+            return null;
+        }
+        const textureUrl = extractTextureUrl(sourceUrl);
+        if (!textureUrl) {
+            return null;
+        }
+        const fspath = Editor.assetdb.urlToFspath(textureUrl);
+        if (!fspath) {
+            return null;
+        }
+        const fs = require("fs");
+        const path = require("path");
+        const metaPath = fspath + ".meta";
+        let subMeta = null;
+        if (fs.existsSync(metaPath)) {
+            const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+            if (meta && meta.subMetas) {
+                const subKey = sourceUrl.indexOf(textureUrl + "/") === 0 ? sourceUrl.slice(textureUrl.length + 1) : "";
+                if (subKey && meta.subMetas[subKey]) {
+                    subMeta = meta.subMetas[subKey];
+                } else {
+                    const firstKey = Object.keys(meta.subMetas)[0];
+                    subMeta = firstKey ? meta.subMetas[firstKey] : null;
+                }
+            }
+        }
+        return {
+            textureName: path.basename(textureUrl),
+            subMeta,
+        };
+    } catch (_error) {
+        return null;
+    }
+};
+
+const applyPreferredSpriteSizeMode = (sprite, uiPolicy, uuid) => {
+    if (!sprite || !cc || !cc.Sprite || !cc.Sprite.SizeMode) {
+        return;
+    }
+    const metaInfo = readSpriteAssetMetaInfo(uuid);
+    const preferredMode = resolvePreferredSpriteSizeMode(
+        uiPolicy,
+        (metaInfo && metaInfo.textureName) || "",
+        metaInfo && metaInfo.subMeta,
+    );
+    sprite.sizeMode =
+        preferredMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
 };
 
 const applyResolvedUiPolicyToNode = (node, resolvedPolicy) => {
@@ -489,8 +588,8 @@ export = {
         } else if (type === "sprite") {
             newNode = new cc.Node(name || "新建精灵节点");
             let sprite = newNode.addComponent(cc.Sprite);
-            // 设置为 CUSTOM 模式
-            sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            // 默认先用 RAW，真实赋图后会根据是否为点9自动切换
+            sprite.sizeMode = cc.Sprite.SizeMode.RAW;
             // 为精灵设置默认尺寸
             newNode.width = 100;
             newNode.height = 100;
@@ -499,7 +598,9 @@ export = {
             if (args.defaultSpriteUuid) {
                 cc.assetManager.loadAny(args.defaultSpriteUuid, (err, asset) => {
                     if (!err && (asset instanceof cc.SpriteFrame || asset instanceof cc.Texture2D)) {
-                        sprite.spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+                        const spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+                        sprite.spriteFrame = spriteFrame;
+                        applyPreferredSpriteSizeMode(sprite, args.uiPolicy, getSpriteFrameUuid(spriteFrame));
                         Editor.Ipc.sendToMain("scene:dirty");
                     }
                 });
@@ -747,6 +848,7 @@ export = {
                             const uuids: any[] = isAssetArray ? (value as any[]) : [value];
                             const loadedAssets = [];
                             let loadedCount = 0;
+                            const autoNineSliceCandidateUuids = [];
 
                             if (uuids.length === 0) {
                                 component[key] = [];
@@ -810,6 +912,9 @@ export = {
                                             );
                                         } else {
                                             loadedAssets[idx] = asset;
+                                            if (needsSpriteFrame && typeof targetUuid === "string") {
+                                                autoNineSliceCandidateUuids.push(targetUuid);
+                                            }
                                         }
                                     } else {
                                         Editor.warn(
@@ -817,15 +922,26 @@ export = {
                                         );
                                     }
 
-                                    if (loadedCount === uuids.length) {
-                                        if (isAssetArray) {
-                                            // 过滤掉加载失败的
-                                            component[key] = loadedAssets.filter((a) => !!a);
-                                        } else {
-                                            if (loadedAssets[0]) component[key] = loadedAssets[0];
-                                        }
+                                        if (loadedCount === uuids.length) {
+                                            if (isAssetArray) {
+                                                // 过滤掉加载失败的
+                                                component[key] = loadedAssets.filter((a) => !!a);
+                                            } else {
+                                                if (loadedAssets[0]) component[key] = loadedAssets[0];
+                                                if (
+                                                    component instanceof cc.Sprite &&
+                                                    key === "spriteFrame" &&
+                                                    autoNineSliceCandidateUuids.length > 0
+                                                ) {
+                                                    applyPreferredSpriteSizeMode(
+                                                        component,
+                                                        args.uiPolicy,
+                                                        autoNineSliceCandidateUuids[0],
+                                                    );
+                                                }
+                                            }
 
-                                        // 通知编辑器 UI 更新
+                                            // 通知编辑器 UI 更新
                                         const compIndex = node._components.indexOf(component);
                                         if (compIndex !== -1) {
                                             Editor.Ipc.sendToPanel("scene", "scene:set-property", {
@@ -837,6 +953,11 @@ export = {
                                             });
                                         }
                                         Editor.Ipc.sendToMain("scene:dirty");
+                                        Array.from(new Set(autoNineSliceCandidateUuids)).forEach((candidateUuid) => {
+                                            Editor.Ipc.sendToMain("mcp-bridge:auto-ensure-nine-slice-for-asset", {
+                                                uuid: candidateUuid,
+                                            });
+                                        });
                                     }
                                 });
                             });
@@ -2001,6 +2122,13 @@ export = {
             }
         } catch (e) {
             if (event.reply) event.reply(new Error("退出预制体模式发生异常: " + e.message));
+        }
+    },
+    "collect-current-sprite-assets": function (event, args) {
+        try {
+            if (event.reply) event.reply(null, collectCurrentSpriteAssetUuids());
+        } catch (e) {
+            if (event.reply) event.reply(new Error("收集当前 Sprite 资源失败: " + e.message));
         }
     },
 };

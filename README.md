@@ -68,6 +68,7 @@ npm run build
 ### 项目 UI Policy
 
 - 插件支持项目级 UI 策略文件，用于约束 AI 创建 UI 节点和 UI 预制体时的锚点、根节点拉伸和安全区行为。
+- 同一份策略文件也可声明 `autoNineSlice` 规则：当 AI 给节点赋上名字命中规则的 `SpriteFrame` 时，插件会自动补齐缺失的 9-slice 边距。
 - 默认读取顺序：
   - `packages/mcp-bridge/project-ui-policy.json`
   - `settings/mcp-ui-policy.json`（若存在，则覆盖前者）
@@ -76,7 +77,9 @@ npm run build
   - `screen-root` 预设：全屏 prefab 根节点自动 `Widget/full`
   - `safe-area-root` 预设：全屏交互根节点自动 `Widget/full + SafeArea`
 - 对已存在的节点，可使用 `apply_ui_policy` 直接补齐项目规范，而不必重建节点。
+- 对已经挂上场景/预制体的点9纹理，可使用 `ensure_current_9slice_textures` 扫描当前用到的资源并自动补齐缺失边距。
 - 对 AI 自动化流程，推荐形成固定闭环：`create_node/create_prefab` -> `apply_ui_policy` -> `validate_ui_prefab`。
+- `autoNineSlice` 的处理标记会写入 `settings/mcp-bridge.json`，避免同一纹理被重复触发。
 - MCP 还会额外暴露两个标准资源：
   - `cocos://ui/policy`
   - `cocos://ui/workflow`
@@ -243,6 +246,14 @@ mcp-bridge/
   - 需要安全区时是否挂载 `SafeArea`
   - 所有按钮节点是否使用中心锚点 `(0.5, 0.5)`
 
+### 7.3 ensure_current_9slice_textures
+
+- **描述**: 扫描当前场景或预制体里已经被 `Sprite` / `Button` 用到的纹理；若文件名命中项目 `autoNineSlice` 规则且当前 border 尚未设置，则自动补齐 9-slice。
+- **参数**: 无
+- **说明**:
+  - 适合在 AI 完成一轮 prefab/scene 修改后做一次兜底扫描
+  - 已处理过的纹理会写入项目标记，后续重复调用会自动跳过
+
 ### 8. manage_components
 
 - **描述**: 管理节点组件（增删改查）
@@ -281,9 +292,9 @@ mcp-bridge/
 - **描述**: 按条件搜索场景中的游戏对象
 - **参数**: `conditions`(name/component/active), `recursive`
 
-### 15. manage_material / manage_texture / manage_shader
+### 15. manage_material / manage_texture / ensure_current_9slice_textures / manage_shader
 
-- **描述**: 管理材质、纹理、着色器资源
+- **描述**: 管理材质、纹理、九宫格扫描、着色器资源
 - **参数**: `action`, `path`, `properties`/`content`
 
 ### 16. execute_menu_item

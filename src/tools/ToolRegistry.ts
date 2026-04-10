@@ -403,6 +403,14 @@ export const getToolsList = () => {
 			},
 		},
 		{
+			name: "ensure_current_9slice_textures",
+			description: `${globalPrecautions} 扫描当前场景或预制体里已经用到的 Sprite/Button 纹理；若文件名命中项目 autoNineSlice 规则且 border 尚未设置，则自动补齐 9-slice，并把处理结果写入项目标记避免重复触发。`,
+			inputSchema: {
+				type: "object",
+				properties: {},
+			},
+		},
+		{
 			name: "manage_shader",
 			description: `${globalPrecautions} 管理着色器 (Effect)。支持创建、读取、更新、删除和获取信息。`,
 			inputSchema: {

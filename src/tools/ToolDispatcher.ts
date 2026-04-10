@@ -7,6 +7,7 @@ import { AssetPatcher } from '../utils/AssetPatcher';
 import { loadProjectUiPolicyForCurrentEditor } from '../utils/UiPolicyLoader';
 import { CommandQueue } from '../core/CommandQueue';
 import { McpWrappers } from '../core/McpWrappers';
+import { AutoNineSliceService } from "../core/AutoNineSliceService";
 declare const Editor: any;
 
 function getNewSceneTemplate() { return `[
@@ -388,6 +389,7 @@ export class ToolDispatcher {
 				break;
 
 			case "manage_components":
+				args.uiPolicy = loadProjectUiPolicyForCurrentEditor();
 				CommandQueue.callSceneScriptWithTimeout("mcp-bridge", "manage-components", args, callback);
 				break;
 
@@ -431,6 +433,15 @@ export class ToolDispatcher {
 
 			case "manage_texture":
 				ToolDispatcher.manageTexture(args, callback);
+				break;
+
+			case "ensure_current_9slice_textures":
+				CommandQueue.callSceneScriptWithTimeout("mcp-bridge", "collect-current-sprite-assets", {}, (err, uuids) => {
+					if (err) {
+						return callback(err);
+					}
+					AutoNineSliceService.ensureForAssetUuids(Array.isArray(uuids) ? uuids : [], callback);
+				});
 				break;
 
 			case "manage_shader":

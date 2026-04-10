@@ -56,6 +56,23 @@
 
 ---
 
+## 点9纹理自动兜底 (2026-04-10)
+
+### 1. `autoNineSlice` 项目规则
+
+- **新增项目级规则**: `project-ui-policy.json` 支持 `autoNineSlice` 段，可按文件名模式声明九宫格边距。
+- **避免硬编码**: 不再依赖 prompt 猜测边距，改为由项目规则提供精确 `[top, bottom, left, right]`。
+
+### 2. 赋图即自动修正
+
+- **自动触发**: 当 AI 通过 `manage_components` 给 `Sprite` / `Button` 赋 `SpriteFrame` 时，若纹理名命中规则且 border 未配置，插件会自动补齐。
+- **去重标记**: 处理结果写入 `settings/mcp-bridge.json`，避免同一纹理被重复触发。
+
+### 3. 新增 `ensure_current_9slice_textures`
+
+- **扫描当前使用资源**: 可显式扫描当前场景/预制体里已经挂上的 `Sprite` / `Button` 纹理。
+- **补齐缺失九宫格**: 对命中规则但尚未设置的点9纹理自动写入 Meta。
+
 ## 纹理与节点变换增强 (Texture & Transform Updates) (2026-02-10)
 
 ### 1. `manage_texture` 工具增强

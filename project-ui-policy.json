@@ -21,6 +21,67 @@
       "tolerance": 4
     }
   },
+  "autoNineSlice": {
+    "enabled": true,
+    "triggerOnSpriteAssignment": true,
+    "rules": [
+      {
+        "pattern": "比赛-场次衬底（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-场次bg（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-奖励&排行底（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-奖励&排行列表衬底（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-奖励&排行列表衬底-自己（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-进度底槽（点9）",
+        "matchMode": "contains",
+        "border": [10, 10, 10, 10]
+      },
+      {
+        "pattern": "比赛-进度条（点9）",
+        "matchMode": "contains",
+        "border": [7, 7, 7, 7]
+      },
+      {
+        "pattern": "比赛-赛事信息衬底（点9）",
+        "matchMode": "contains",
+        "border": [50, 50, 50, 50]
+      },
+      {
+        "pattern": "ludo-名次奖励bg（点9自适应）",
+        "matchMode": "contains",
+        "border": [14, 14, 14, 14]
+      },
+      {
+        "pattern": "tab-选中（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "tab-bg(点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      }
+    ]
+  },
   "presets": {
     "button": {
       "anchor": {
