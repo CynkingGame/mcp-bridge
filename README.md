@@ -65,6 +65,23 @@ npm run build
 - **多实例支持**: 如果默认端口 (3456) 被占用，插件会自动尝试端口+1 (如 3457)，直到找到可用端口。
 - **配置隔离**: 插件配置（是否自动启动、上次使用的端口）现已存储在项目目录 (`settings/mcp-bridge.json`) 中，不同项目的配置互不干扰。
 
+### 项目 UI Policy
+
+- 插件支持项目级 UI 策略文件，用于约束 AI 创建 UI 节点和 UI 预制体时的锚点、根节点拉伸和安全区行为。
+- 默认读取顺序：
+  - `packages/mcp-bridge/project-ui-policy.json`
+  - `settings/mcp-ui-policy.json`（若存在，则覆盖前者）
+- 当前内置能力适合这类约束：
+  - `button` 预设：按钮默认中心锚点
+  - `screen-root` 预设：全屏 prefab 根节点自动 `Widget/full`
+  - `safe-area-root` 预设：全屏交互根节点自动 `Widget/full + SafeArea`
+- 对已存在的节点，可使用 `apply_ui_policy` 直接补齐项目规范，而不必重建节点。
+- 对 AI 自动化流程，推荐形成固定闭环：`create_node/create_prefab` -> `apply_ui_policy` -> `validate_ui_prefab`。
+- MCP 还会额外暴露两个标准资源：
+  - `cocos://ui/policy`
+  - `cocos://ui/workflow`
+  支持资源读取的 AI 客户端可以直接将其作为项目级提示上下文使用。
+
 ## 连接 AI 编辑器
 
 ### 自动化一键配置（推荐）
@@ -198,7 +215,33 @@ mcp-bridge/
 ### 7. create_node
 
 - **描述**: 在当前场景中创建新节点
-- **参数**: `name`(必需), `parentId`, `type`(empty/sprite/label/button), `layout`(center/top/bottom/full 等)
+- **参数**: `name`(必需), `parentId`, `type`(empty/sprite/label/button), `layout`(center/top/bottom/full 等), `uiPreset`
+- **说明**:
+  - 当未传 `parentId` 且节点类型为 UI 节点时，插件会优先尝试自动挂到 `Canvas`
+  - `uiPreset` 会读取项目 UI policy，自动补锚点 / Widget / SafeArea
+  - `button` 类型默认会命中项目里的 `button` 预设（若存在）
+
+### 7.1 apply_ui_policy
+
+- **描述**: 将项目 UI policy 预设直接应用到现有节点
+- **参数**: `nodeId`(必需), `preset`
+- **说明**:
+  - 适用于已打开的 prefab 根节点、按钮或交互容器修正
+  - 常见用法：对全屏根节点应用 `screen-root` / `safe-area-root`，对按钮应用 `button`
+
+### 7.2 validate_ui_prefab
+
+- **描述**: 校验当前 UI 预制体/节点是否符合项目 UI policy
+- **参数**: `nodeId`(必需), `expectedRootPreset`
+- **返回**:
+  - `ok`: 是否通过
+  - `rootPreset`: 实际使用或推断的根节点预设
+  - `findings`: 问题列表
+- **当前检查项**:
+  - 根节点锚点是否符合项目 root preset
+  - 根节点是否具备对应的 `Widget` 布局
+  - 需要安全区时是否挂载 `SafeArea`
+  - 所有按钮节点是否使用中心锚点 `(0.5, 0.5)`
 
 ### 8. manage_components
 
@@ -223,7 +266,10 @@ mcp-bridge/
 ### 12. scene_management / prefab_management
 
 - **描述**: 场景和预制体管理
-- **参数**: `action`(create/delete/duplicate/get_info), `path`, `nodeId`, `parentId`
+- **参数**: `action`(create/delete/duplicate/get_info), `path`, `nodeId`, `parentId`, `rootPreset`
+- **说明**:
+  - `prefab_management.create` 可传 `rootPreset`
+  - 若未显式传 `rootPreset`，插件会按项目 Canvas 设计分辨率自动识别“屏幕型”根节点，并补全根节点适配
 
 ### 13. manage_editor
 
@@ -293,7 +339,10 @@ mcp-bridge/
 ### 26. create_scene / create_prefab
 
 - **描述**: 创建场景文件 / 将场景节点保存为预制体
-- **参数**: `sceneName` / `nodeId` + `prefabName`
+- **参数**: `sceneName` / `nodeId` + `prefabName` + `rootPreset`
+- **说明**:
+  - `create_prefab` 适合从场景节点直接产出 UI prefab
+  - 对于全屏 UI 根节点，建议传 `rootPreset: "screen-root"` 或 `rootPreset: "safe-area-root"`
 
 ### 27. build_project
 

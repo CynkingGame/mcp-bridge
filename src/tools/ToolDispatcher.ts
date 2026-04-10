@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { Logger } from '../core/Logger';
 import { AssetPatcher } from '../utils/AssetPatcher';
+import { loadProjectUiPolicyForCurrentEditor } from '../utils/UiPolicyLoader';
 import { CommandQueue } from '../core/CommandQueue';
 import { McpWrappers } from '../core/McpWrappers';
 declare const Editor: any;
@@ -317,6 +318,7 @@ export class ToolDispatcher {
 				break;
 
 			case "create_prefab": {
+				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
 				// 先重命名节点以匹配预制体名称
 				Editor.Ipc.sendToPanel("scene", "scene:set-property", {
 					id: args.nodeId,
@@ -328,7 +330,7 @@ export class ToolDispatcher {
 				// 【修复】使用自定义 9 步后处理管线：Editor.serialize() → 移除 cc.Scene → 添加 cc.Prefab/cc.PrefabInfo → 清空 _id
 				const prefabUrl = `db://assets/${args.prefabName}.prefab`;
 				setTimeout(() => {
-					ToolDispatcher._createPrefabViaSceneScript(args.nodeId, prefabUrl, callback);
+					ToolDispatcher._createPrefabViaSceneScript(args.nodeId, prefabUrl, args.rootPreset, uiPolicy, callback);
 				}, 300);
 				break;
 			}
@@ -365,6 +367,7 @@ export class ToolDispatcher {
 				break;
 
 			case "create_node":
+				args.uiPolicy = loadProjectUiPolicyForCurrentEditor();
 				if (args.type === "sprite" || args.type === "button") {
 					const splashUuid = Editor.assetdb.urlToUuid(
 						"db://internal/image/default_sprite_splash.png/default_sprite_splash",
@@ -372,6 +375,16 @@ export class ToolDispatcher {
 					args.defaultSpriteUuid = splashUuid;
 				}
 				CommandQueue.callSceneScriptWithTimeout("mcp-bridge", "create-node", args, callback);
+				break;
+
+			case "apply_ui_policy":
+				args.uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				CommandQueue.callSceneScriptWithTimeout("mcp-bridge", "apply-ui-policy", args, callback);
+				break;
+
+			case "validate_ui_prefab":
+				args.uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				CommandQueue.callSceneScriptWithTimeout("mcp-bridge", "validate-ui-prefab", args, callback);
 				break;
 
 			case "manage_components":
@@ -549,8 +562,12 @@ export class ToolDispatcher {
 	 * @param {Function} callback 完成回调 (err, result)
 	 */
 
-  static _createPrefabViaSceneScript(nodeId, prefabUrl, callback) {
-		CommandQueue.callSceneScriptWithTimeout("mcp-bridge", "create-prefab", { nodeId }, (err, serializedData) => {
+  static _createPrefabViaSceneScript(nodeId, prefabUrl, rootPreset, uiPolicy, callback) {
+		CommandQueue.callSceneScriptWithTimeout(
+			"mcp-bridge",
+			"create-prefab",
+			{ nodeId, rootPreset, uiPolicy },
+			(err, serializedData) => {
 			if (err) {
 				// addLog("error", `[create-prefab] 序列化节点失败: ${err}`);
 				return callback(err);
@@ -573,7 +590,8 @@ export class ToolDispatcher {
 					doneCreate(null, `预制体已创建: ${prefabUrl}`);
 				}, 500);
 			});
-		});
+			},
+		);
 	}
 
   static manageScript(args, callback) {
@@ -915,6 +933,7 @@ export default class NewScript extends cc.Component {
 					isSubProp: false,
 				});
 
+				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
 				// 2.【修复】使用自定义序列化替代内置 scene:create-prefab，避免根节点 PrefabInfo 损坏
 				// _createPrefabViaSceneScript 内部调用 Editor.assetdb.create()，
 				// 前置通过 _ensureParentDir 等待真实目录建立完备
@@ -922,7 +941,7 @@ export default class NewScript extends cc.Component {
 
 				// 对于预制体，_createPrefabViaSceneScript 需要在内部采用 _safeCreateAsset
 				// 所以我们这里直接调用，将逻辑下放到内部
-				ToolDispatcher._createPrefabViaSceneScript(nodeId, createdPrefabUrl, callback);
+				ToolDispatcher._createPrefabViaSceneScript(nodeId, createdPrefabUrl, args.rootPreset, uiPolicy, callback);
 				break;
 
 			case "save": // 兼容 AI 幻觉

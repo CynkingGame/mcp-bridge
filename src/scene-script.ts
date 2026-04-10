@@ -1,5 +1,7 @@
 
 "use strict";
+import { resolveCreateNodePolicy, resolveNamedUiPreset, resolvePrefabRootPolicy } from "./utils/UiPolicy";
+import { validateUiTree } from "./utils/UiPolicyValidation";
 
 /**
  * 更加健壮的节点查找函数，支持解压后的 UUID
@@ -21,6 +23,242 @@ const findNode = (id) => {
         }
     }
     return node;
+};
+
+const getCanvasComponent = (scene) => {
+    if (!scene) return null;
+    return scene.getComponentInChildren(cc.Canvas);
+};
+
+const getCanvasDesignResolution = (scene, uiPolicy) => {
+    const canvasComp = getCanvasComponent(scene);
+    if (canvasComp && canvasComp.designResolution) {
+        return {
+            width: canvasComp.designResolution.width,
+            height: canvasComp.designResolution.height,
+        };
+    }
+    const fallback = uiPolicy && uiPolicy.canvas && uiPolicy.canvas.designResolution;
+    if (fallback) {
+        return {
+            width: fallback.width,
+            height: fallback.height,
+        };
+    }
+    return null;
+};
+
+const ensureWidget = (node) => {
+    return node.getComponent(cc.Widget) || node.addComponent(cc.Widget);
+};
+
+const resetWidgetAlignment = (widget) => {
+    widget.target = null;
+    widget.alignMode = cc.Widget.AlignMode.ONCE;
+    widget.isAlignTop = false;
+    widget.isAlignBottom = false;
+    widget.isAlignLeft = false;
+    widget.isAlignRight = false;
+    widget.isAlignHorizontalCenter = false;
+    widget.isAlignVerticalCenter = false;
+    widget.top = 0;
+    widget.bottom = 0;
+    widget.left = 0;
+    widget.right = 0;
+    widget.horizontalCenter = 0;
+    widget.verticalCenter = 0;
+    widget.isAbsoluteTop = true;
+    widget.isAbsoluteBottom = true;
+    widget.isAbsoluteLeft = true;
+    widget.isAbsoluteRight = true;
+    widget.isAbsoluteHorizontalCenter = true;
+    widget.isAbsoluteVerticalCenter = true;
+};
+
+const applyLayoutToWidget = (widget, layout) => {
+    if (!widget || !layout) return;
+    resetWidgetAlignment(widget);
+
+    switch (layout) {
+        case "center":
+            widget.isAlignHorizontalCenter = true;
+            widget.isAlignVerticalCenter = true;
+            break;
+        case "full":
+            widget.isAlignTop = true;
+            widget.isAlignBottom = true;
+            widget.isAlignLeft = true;
+            widget.isAlignRight = true;
+            break;
+        case "top":
+            widget.isAlignTop = true;
+            widget.isAlignHorizontalCenter = true;
+            break;
+        case "bottom":
+            widget.isAlignBottom = true;
+            widget.isAlignHorizontalCenter = true;
+            break;
+        case "left":
+            widget.isAlignLeft = true;
+            widget.isAlignVerticalCenter = true;
+            break;
+        case "right":
+            widget.isAlignRight = true;
+            widget.isAlignVerticalCenter = true;
+            break;
+        case "top-left":
+            widget.isAlignTop = true;
+            widget.isAlignLeft = true;
+            break;
+        case "top-right":
+            widget.isAlignTop = true;
+            widget.isAlignRight = true;
+            break;
+        case "bottom-left":
+            widget.isAlignBottom = true;
+            widget.isAlignLeft = true;
+            break;
+        case "bottom-right":
+            widget.isAlignBottom = true;
+            widget.isAlignRight = true;
+            break;
+    }
+};
+
+const applyResolvedUiPolicyToNode = (node, resolvedPolicy) => {
+    if (!node || !resolvedPolicy) return;
+
+    if (resolvedPolicy.anchor) {
+        node.anchorX = Number(resolvedPolicy.anchor.x);
+        node.anchorY = Number(resolvedPolicy.anchor.y);
+    }
+
+    if (resolvedPolicy.layout) {
+        const widget = ensureWidget(node);
+        applyLayoutToWidget(widget, resolvedPolicy.layout);
+    }
+
+    if (resolvedPolicy.safeArea && !node.getComponent(cc.SafeArea)) {
+        node.addComponent(cc.SafeArea);
+    }
+};
+
+const captureUiState = (node) => {
+    const widget = node.getComponent(cc.Widget);
+    const safeArea = node.getComponent(cc.SafeArea);
+    return {
+        anchorX: node.anchorX,
+        anchorY: node.anchorY,
+        hadWidget: !!widget,
+        widget: widget
+            ? {
+                  enabled: widget.enabled,
+                  target: widget.target,
+                  alignMode: widget.alignMode,
+                  isAlignTop: widget.isAlignTop,
+                  isAlignBottom: widget.isAlignBottom,
+                  isAlignLeft: widget.isAlignLeft,
+                  isAlignRight: widget.isAlignRight,
+                  isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
+                  isAlignVerticalCenter: widget.isAlignVerticalCenter,
+                  top: widget.top,
+                  bottom: widget.bottom,
+                  left: widget.left,
+                  right: widget.right,
+                  horizontalCenter: widget.horizontalCenter,
+                  verticalCenter: widget.verticalCenter,
+                  isAbsoluteTop: widget.isAbsoluteTop,
+                  isAbsoluteBottom: widget.isAbsoluteBottom,
+                  isAbsoluteLeft: widget.isAbsoluteLeft,
+                  isAbsoluteRight: widget.isAbsoluteRight,
+                  isAbsoluteHorizontalCenter: widget.isAbsoluteHorizontalCenter,
+                  isAbsoluteVerticalCenter: widget.isAbsoluteVerticalCenter,
+              }
+            : null,
+        hadSafeArea: !!safeArea,
+        safeAreaEnabled: safeArea ? safeArea.enabled : false,
+    };
+};
+
+const restoreUiState = (node, snapshot) => {
+    if (!node || !snapshot) return;
+
+    node.anchorX = snapshot.anchorX;
+    node.anchorY = snapshot.anchorY;
+
+    let widget = node.getComponent(cc.Widget);
+    if (!snapshot.hadWidget) {
+        if (widget) {
+            node.removeComponent(widget);
+        }
+    } else {
+        widget = widget || node.addComponent(cc.Widget);
+        widget.enabled = snapshot.widget.enabled;
+        widget.target = snapshot.widget.target;
+        widget.alignMode = snapshot.widget.alignMode;
+        widget.isAlignTop = snapshot.widget.isAlignTop;
+        widget.isAlignBottom = snapshot.widget.isAlignBottom;
+        widget.isAlignLeft = snapshot.widget.isAlignLeft;
+        widget.isAlignRight = snapshot.widget.isAlignRight;
+        widget.isAlignHorizontalCenter = snapshot.widget.isAlignHorizontalCenter;
+        widget.isAlignVerticalCenter = snapshot.widget.isAlignVerticalCenter;
+        widget.top = snapshot.widget.top;
+        widget.bottom = snapshot.widget.bottom;
+        widget.left = snapshot.widget.left;
+        widget.right = snapshot.widget.right;
+        widget.horizontalCenter = snapshot.widget.horizontalCenter;
+        widget.verticalCenter = snapshot.widget.verticalCenter;
+        widget.isAbsoluteTop = snapshot.widget.isAbsoluteTop;
+        widget.isAbsoluteBottom = snapshot.widget.isAbsoluteBottom;
+        widget.isAbsoluteLeft = snapshot.widget.isAbsoluteLeft;
+        widget.isAbsoluteRight = snapshot.widget.isAbsoluteRight;
+        widget.isAbsoluteHorizontalCenter = snapshot.widget.isAbsoluteHorizontalCenter;
+        widget.isAbsoluteVerticalCenter = snapshot.widget.isAbsoluteVerticalCenter;
+    }
+
+    let safeArea = node.getComponent(cc.SafeArea);
+    if (!snapshot.hadSafeArea) {
+        if (safeArea) {
+            node.removeComponent(safeArea);
+        }
+    } else {
+        safeArea = safeArea || node.addComponent(cc.SafeArea);
+        safeArea.enabled = snapshot.safeAreaEnabled;
+    }
+};
+
+const snapshotNodeForValidation = (node) => {
+    if (!node) return null;
+
+    const widget = node.getComponent(cc.Widget);
+    const safeArea = node.getComponent(cc.SafeArea);
+    const components = (node._components || []).map((component) => cc.js.getClassName(component));
+
+    return {
+        name: node.name,
+        uuid: node.uuid,
+        anchor: {
+            x: node.anchorX,
+            y: node.anchorY,
+        },
+        size: {
+            width: node.width,
+            height: node.height,
+        },
+        components,
+        hasSafeArea: !!safeArea,
+        widget: widget
+            ? {
+                  isAlignTop: widget.isAlignTop,
+                  isAlignBottom: widget.isAlignBottom,
+                  isAlignLeft: widget.isAlignLeft,
+                  isAlignRight: widget.isAlignRight,
+                  isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
+                  isAlignVerticalCenter: widget.isAlignVerticalCenter,
+              }
+            : null,
+        children: node.children.map((child) => snapshotNodeForValidation(child)),
+    };
 };
 
 export = {
@@ -219,6 +457,7 @@ export = {
     "create-node": function (event, args) {
         const { name, parentId, type } = args;
         const scene = cc.director.getScene();
+        const resolvedCreateNodePolicy = resolveCreateNodePolicy(args.uiPolicy, args);
         if (!scene) {
             if (event.reply) event.reply(new Error("场景尚未准备好或正在加载。"));
             return;
@@ -232,8 +471,17 @@ export = {
             let canvas = newNode.addComponent(cc.Canvas);
             newNode.addComponent(cc.Widget);
             // 设置默认设计分辨率
-            canvas.designResolution = cc.size(960, 640);
-            canvas.fitHeight = true;
+            const designResolution =
+                (args.uiPolicy &&
+                    args.uiPolicy.canvas &&
+                    args.uiPolicy.canvas.designResolution) || { width: 960, height: 640 };
+            canvas.designResolution = cc.size(designResolution.width, designResolution.height);
+            canvas.fitWidth =
+                !!(args.uiPolicy && args.uiPolicy.canvas && args.uiPolicy.canvas.fitWidth);
+            canvas.fitHeight =
+                args.uiPolicy && args.uiPolicy.canvas && args.uiPolicy.canvas.fitHeight !== undefined
+                    ? !!args.uiPolicy.canvas.fitHeight
+                    : true;
             // 自动在 Canvas 下创建一个 Camera
             let camNode = new cc.Node("Main Camera");
             camNode.addComponent(cc.Camera);
@@ -288,14 +536,16 @@ export = {
             newNode = new cc.Node(name || "新建节点");
         }
 
+        applyResolvedUiPolicyToNode(newNode, resolvedCreateNodePolicy);
+
         // 设置层级
         let parent = null;
         if (parentId) {
             parent = findNode(parentId);
         } else {
             // 【Canvas Sniffing】如果是 UI 节点且未指定 parentId，尝试挂载到 Canvas
-            if (type === "sprite" || type === "button" || type === "label") {
-                const canvasComp = scene.getComponentInChildren(cc.Canvas);
+            if (resolvedCreateNodePolicy.autoParentToCanvas) {
+                const canvasComp = getCanvasComponent(scene);
                 if (canvasComp) {
                     parent = canvasComp.node;
                 }
@@ -305,79 +555,6 @@ export = {
         if (parent) {
             newNode.parent = parent;
 
-            // 【Auto Layout】自动挂载和配置 cc.Widget
-            if (args.layout) {
-                let widget = newNode.addComponent(cc.Widget);
-                // 默认对齐模式为 ONCE
-                widget.alignMode = cc.Widget.AlignMode.ONCE;
-
-                switch (args.layout) {
-                    case "center":
-                        widget.isAlignHorizontalCenter = true;
-                        widget.isAlignVerticalCenter = true;
-                        widget.horizontalCenter = 0;
-                        widget.verticalCenter = 0;
-                        break;
-                    case "full":
-                        widget.isAlignTop = true;
-                        widget.isAlignBottom = true;
-                        widget.isAlignLeft = true;
-                        widget.isAlignRight = true;
-                        widget.top = 0;
-                        widget.bottom = 0;
-                        widget.left = 0;
-                        widget.right = 0;
-                        break;
-                    case "top":
-                        widget.isAlignTop = true;
-                        widget.isAlignHorizontalCenter = true;
-                        widget.top = 0;
-                        widget.horizontalCenter = 0;
-                        break;
-                    case "bottom":
-                        widget.isAlignBottom = true;
-                        widget.isAlignHorizontalCenter = true;
-                        widget.bottom = 0;
-                        widget.horizontalCenter = 0;
-                        break;
-                    case "left":
-                        widget.isAlignLeft = true;
-                        widget.isAlignVerticalCenter = true;
-                        widget.left = 0;
-                        widget.verticalCenter = 0;
-                        break;
-                    case "right":
-                        widget.isAlignRight = true;
-                        widget.isAlignVerticalCenter = true;
-                        widget.right = 0;
-                        widget.verticalCenter = 0;
-                        break;
-                    case "top-left":
-                        widget.isAlignTop = true;
-                        widget.isAlignLeft = true;
-                        widget.top = 0;
-                        widget.left = 0;
-                        break;
-                    case "top-right":
-                        widget.isAlignTop = true;
-                        widget.isAlignRight = true;
-                        widget.top = 0;
-                        widget.right = 0;
-                        break;
-                    case "bottom-left":
-                        widget.isAlignBottom = true;
-                        widget.isAlignLeft = true;
-                        widget.bottom = 0;
-                        widget.left = 0;
-                        break;
-                    case "bottom-right":
-                        widget.isAlignBottom = true;
-                        widget.isAlignRight = true;
-                        widget.bottom = 0;
-                        widget.right = 0;
-                        break;
-                }
-            }
             // 不要在这里同步调用 widget.updateAlignment()，因为此刻场景树的世界矩阵可能未刷新，
             // 导致 cc.Widget 计算出双倍的错误坐标（如将 405 算成 810）。
             // 让 Cocos 引擎在下一帧自动接管并对齐！
@@ -400,10 +577,56 @@ export = {
                 if (canvasComp) {
                     canvasInfo = `CanvasSize(${parent.width}x${parent.height}) Design(${canvasComp.designResolution.width}x${canvasComp.designResolution.height})`;
                 }
-                event.reply(null, `节点创建成功 UUID: ${newNode.uuid}, 已挂载至 ${parent.name}${canvasInfo ? ' ' + canvasInfo : ''}. ComputedPos: (${newNode.x}, ${newNode.y})`);
+                const policyInfo = resolvedCreateNodePolicy.presetName
+                    ? ` UiPreset(${resolvedCreateNodePolicy.presetName})`
+                    : "";
+                event.reply(null, `节点创建成功 UUID: ${newNode.uuid}, 已挂载至 ${parent.name}${canvasInfo ? ' ' + canvasInfo : ''}${policyInfo}. ComputedPos: (${newNode.x}, ${newNode.y})`);
             }
         } else {
             if (event.reply) event.reply(new Error(`无法创建节点：找不到父节点 ${parentId}`));
+        }
+    },
+
+    "apply-ui-policy": function (event, args) {
+        const { nodeId, preset } = args;
+        const node = findNode(nodeId);
+        if (!node) {
+            if (event.reply) event.reply(new Error(`找不到节点: ${nodeId}`));
+            return;
+        }
+
+        const resolvedPreset = resolveNamedUiPreset(args.uiPolicy, preset);
+        if (!resolvedPreset.presetName) {
+            if (event.reply) event.reply(new Error(`未知的 UI 预设: ${preset}`));
+            return;
+        }
+
+        applyResolvedUiPolicyToNode(node, resolvedPreset);
+        Editor.Ipc.sendToMain("scene:dirty");
+        Editor.Ipc.sendToAll("scene:node-changed", {
+            uuid: node.uuid,
+        });
+
+        if (event.reply) {
+            event.reply(null, `已将 UI 预设 ${resolvedPreset.presetName} 应用到节点 ${node.name} (${node.uuid})`);
+        }
+    },
+
+    "validate-ui-prefab": function (event, args) {
+        const { nodeId, expectedRootPreset } = args;
+        const node = findNode(nodeId);
+        if (!node) {
+            if (event.reply) event.reply(new Error(`找不到节点: ${nodeId}`));
+            return;
+        }
+
+        const snapshot = snapshotNodeForValidation(node);
+        const result = validateUiTree(args.uiPolicy, snapshot, {
+            expectedRootPreset,
+        });
+
+        if (event.reply) {
+            event.reply(null, result);
         }
     },
 
@@ -1550,7 +1773,22 @@ export = {
             return;
         }
 
+        const scene = cc.director.getScene();
+        const resolvedPrefabRootPolicy = resolvePrefabRootPolicy(args.uiPolicy, {
+            rootPreset: args.rootPreset,
+            nodeSize: {
+                width: node.width,
+                height: node.height,
+            },
+            canvasDesignResolution: getCanvasDesignResolution(scene, args.uiPolicy),
+        });
+        const nodeUiSnapshot = resolvedPrefabRootPolicy.shouldApply ? captureUiState(node) : null;
+
         try {
+            if (resolvedPrefabRootPolicy.shouldApply) {
+                applyResolvedUiPolicyToNode(node, resolvedPrefabRootPolicy);
+            }
+
             // 第一步：使用 Editor.serialize 获取原始序列化数据（场景格式）
             const serializedStr = Editor.serialize(node);
             const sceneData = JSON.parse(serializedStr);
@@ -1726,6 +1964,10 @@ export = {
             if (event.reply) event.reply(null, result);
         } catch (e) {
             if (event.reply) event.reply(new Error(`序列化节点失败: ${e.message}`));
+        } finally {
+            if (nodeUiSnapshot) {
+                restoreUiState(node, nodeUiSnapshot);
+            }
         }
     },
 

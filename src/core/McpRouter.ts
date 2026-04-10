@@ -33,6 +33,8 @@ export class McpRouter {
 						res.writeHead(500);
 						return res.end(JSON.stringify({ error: err }));
 					}
+					const resourceMap = McpWrappers.getResourceMap();
+					const resourceMeta = resourceMap[uri];
 					Logger.success(`读取成功: ${uri}`);
 					res.writeHead(200);
 					res.end(
@@ -40,7 +42,7 @@ export class McpRouter {
 							contents: [
 								{
 									uri: uri,
-									mimeType: "application/json",
+									mimeType: resourceMeta?.mimeType || "text/plain",
 									text: typeof content === "string" ? content : JSON.stringify(content),
 								},
 							],
