@@ -3,11 +3,28 @@ import { CommandQueue } from "./CommandQueue";
 import { getToolsList } from "../tools/ToolRegistry";
 import { ToolDispatcher } from "../tools/ToolDispatcher";
 import { McpWrappers } from "./McpWrappers";
+import { handleJsonRpcRequest } from "./McpProtocol";
 
 export class McpRouter {
 	public static handleRequest(req: any, res: any) {
 		const url = req.url;
 		const body = req.bodyString; // 附加在请求上的 body 字符串
+		const method = req.method || "GET";
+
+		if (url === "/" && method === "GET") {
+			res.writeHead(200);
+			return res.end(
+				JSON.stringify({
+					name: "mcp-bridge",
+					transport: "http-jsonrpc",
+					message: "POST JSON-RPC MCP requests to /",
+				}),
+			);
+		}
+
+		if ((url === "/" || url === "/mcp") && method === "POST") {
+			return McpRouter.handleStandardMcpRequest(body, res);
+		}
 
 		if (url === "/list-tools") {
 			const tools = getToolsList();
@@ -33,6 +50,8 @@ export class McpRouter {
 						res.writeHead(500);
 						return res.end(JSON.stringify({ error: err }));
 					}
+					const resourceMap = McpWrappers.getResourceMap();
+					const resourceMeta = resourceMap[uri];
 					Logger.success(`读取成功: ${uri}`);
 					res.writeHead(200);
 					res.end(
@@ -40,7 +59,7 @@ export class McpRouter {
 							contents: [
 								{
 									uri: uri,
-									mimeType: "application/json",
+									mimeType: resourceMeta?.mimeType || "text/plain",
 									text: typeof content === "string" ? content : JSON.stringify(content),
 								},
 							],
@@ -120,5 +139,110 @@ export class McpRouter {
 
 		res.writeHead(404);
 		res.end(JSON.stringify({ error: "Not Found", url: url }));
+	}
+
+	private static handleStandardMcpRequest(body: string, res: any) {
+		let request: any = null;
+		try {
+			request = JSON.parse(body || "{}");
+		} catch (e: any) {
+			res.writeHead(400);
+			return res.end(
+				JSON.stringify({
+					jsonrpc: "2.0",
+					id: null,
+					error: {
+						code: -32700,
+						message: "Parse error",
+					},
+				}),
+			);
+		}
+
+		handleJsonRpcRequest(request, {
+			listTools: async () => getToolsList(),
+			callTool: (name, args) =>
+				new Promise((resolve, reject) => {
+					let argsPreview = "";
+					if (args) {
+						try {
+							argsPreview = typeof args === "object" ? JSON.stringify(args) : String(args);
+						} catch (_e) {
+							argsPreview = "[无法序列化的参数]";
+						}
+					}
+					Logger.mcp(`[HTTP MCP] REQ -> [${name}] (队列长度: ${CommandQueue.getLength()}) 参数: ${argsPreview}`);
+
+					CommandQueue.enqueue((done) => {
+						ToolDispatcher.handleMcpCall(name, args, (err: any, result: any) => {
+							const response = {
+								content: [
+									{
+										type: "text",
+										text: err
+											? `Error: ${err}`
+											: typeof result === "object"
+												? JSON.stringify(result)
+												: result,
+									},
+								],
+								isError: !!err,
+							};
+							if (err) {
+								Logger.error(`[HTTP MCP] RES <- [${name}] 失败: ${err}`);
+							} else {
+								Logger.success(`[HTTP MCP] RES <- [${name}] 成功`);
+							}
+							done();
+							resolve(response);
+						});
+					}).catch((rejectReason: any) => {
+						reject(new Error(String(rejectReason)));
+					});
+				}),
+			listResources: async () => McpWrappers.getResourcesList(),
+			readResource: (uri) =>
+				new Promise((resolve, reject) => {
+					Logger.mcp(`[HTTP MCP] READ -> [${uri}]`);
+					McpWrappers.handleReadResource(uri, (err: any, content: any) => {
+						if (err) {
+							Logger.error(`[HTTP MCP] 读取失败: ${err}`);
+							return reject(new Error(String(err)));
+						}
+						const resourceMap = McpWrappers.getResourceMap();
+						const resourceMeta = resourceMap[uri];
+						resolve({
+							contents: [
+								{
+									uri,
+									mimeType: resourceMeta?.mimeType || "text/plain",
+									text: typeof content === "string" ? content : JSON.stringify(content),
+								},
+							],
+						});
+					});
+				}),
+		})
+			.then((response) => {
+				if (response === null) {
+					res.writeHead(202);
+					return res.end();
+				}
+				res.writeHead(200);
+				res.end(JSON.stringify(response));
+			})
+			.catch((e: any) => {
+				res.writeHead(200);
+				res.end(
+					JSON.stringify({
+						jsonrpc: "2.0",
+						id: request && request.id !== undefined ? request.id : null,
+						error: {
+							code: -32603,
+							message: e.message || String(e),
+						},
+					}),
+				);
+			});
 	}
 }

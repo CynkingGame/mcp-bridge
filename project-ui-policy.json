@@ -1,0 +1,111 @@
+{
+  "project": "BigWinGame",
+  "canvas": {
+    "designResolution": {
+      "width": 720,
+      "height": 1280
+    },
+    "fitWidth": true,
+    "fitHeight": false
+  },
+  "createNode": {
+    "autoParentUiToCanvas": true,
+    "defaultPresetsByType": {
+      "button": "button"
+    }
+  },
+  "prefabRoot": {
+    "autoDetectScreenRoot": {
+      "enabled": true,
+      "preset": "screen-root",
+      "tolerance": 4
+    }
+  },
+  "autoNineSlice": {
+    "enabled": true,
+    "triggerOnSpriteAssignment": true,
+    "rules": [
+      {
+        "pattern": "比赛-场次衬底（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-场次bg（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-奖励&排行底（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-奖励&排行列表衬底（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-奖励&排行列表衬底-自己（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "比赛-进度底槽（点9）",
+        "matchMode": "contains",
+        "border": [10, 10, 10, 10]
+      },
+      {
+        "pattern": "比赛-进度条（点9）",
+        "matchMode": "contains",
+        "border": [7, 7, 7, 7]
+      },
+      {
+        "pattern": "比赛-赛事信息衬底（点9）",
+        "matchMode": "contains",
+        "border": [50, 50, 50, 50]
+      },
+      {
+        "pattern": "ludo-名次奖励bg（点9自适应）",
+        "matchMode": "contains",
+        "border": [14, 14, 14, 14]
+      },
+      {
+        "pattern": "tab-选中（点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      },
+      {
+        "pattern": "tab-bg(点9）",
+        "matchMode": "contains",
+        "border": [20, 20, 20, 20]
+      }
+    ]
+  },
+  "presets": {
+    "button": {
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "description": "Buttons use a center anchor by default so scale transitions stay visually stable."
+    },
+    "screen-root": {
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "layout": "full",
+      "description": "Full-screen prefab root that stretches with long screens."
+    },
+    "safe-area-root": {
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "layout": "full",
+      "safeArea": true,
+      "description": "Top-level interactive root constrained to the device safe area."
+    }
+  }
+}

@@ -64,6 +64,14 @@ export class HttpServer {
 	private static handleRawRequest(req: http.IncomingMessage, res: http.ServerResponse, handler: Function) {
 		res.setHeader("Content-Type", "application/json");
 		res.setHeader("Access-Control-Allow-Origin", "*");
+		res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+		res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+
+		if (req.method === "OPTIONS") {
+			res.writeHead(204);
+			res.end();
+			return;
+		}
 
 		const MAX_BODY_SIZE = 5 * 1024 * 1024;
 		let body = "";

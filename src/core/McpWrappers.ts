@@ -4,30 +4,51 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { Logger } from './Logger';
 import { CommandQueue } from './CommandQueue';
+import { loadProjectUiPolicyForCurrentEditor, loadProjectUiWorkflowForCurrentEditor } from '../utils/UiPolicyLoader';
 declare const Editor: any;
 
 export class McpWrappers {
-  static getResourcesList() {
-		return [
-			{
+  static getResourceMap() {
+		const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+		const workflowGuide = loadProjectUiWorkflowForCurrentEditor();
+		return {
+			"cocos://hierarchy": {
 				uri: "cocos://hierarchy",
 				name: "Scene Hierarchy",
 				description: "当前场景层级的 JSON 快照",
 				mimeType: "application/json",
 			},
-			{
+			"cocos://selection": {
 				uri: "cocos://selection",
 				name: "Current Selection",
 				description: "当前选中节点的 UUID 列表",
 				mimeType: "application/json",
 			},
-			{
+			"cocos://logs/latest": {
 				uri: "cocos://logs/latest",
 				name: "Editor Logs",
 				description: "最新的编辑器日志 (内存缓存)",
 				mimeType: "text/plain",
 			},
-		];
+			"cocos://ui/policy": {
+				uri: "cocos://ui/policy",
+				name: "Project UI Policy",
+				description: `当前项目 UI policy JSON。预设: ${Object.keys(uiPolicy.presets || {}).join(", ")}`,
+				mimeType: "application/json",
+			},
+			"cocos://ui/workflow": {
+				uri: "cocos://ui/workflow",
+				name: "UI Prefab Workflow",
+				description: workflowGuide.includes("Item prefab")
+					? "当前项目 UI workflow（含重复块抽 Item prefab 约束）"
+					: "当前项目 UI prefab 工作流指南",
+				mimeType: "text/markdown",
+			},
+		};
+	}
+
+  static getResourcesList() {
+		return Object.values(McpWrappers.getResourceMap());
 	}
 
 	/**
@@ -67,6 +88,22 @@ export class McpWrappers {
 			case "logs":
 				callback(null, Logger.getLogContent());
 				break;
+
+			case "ui": {
+				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				const workflowGuide = loadProjectUiWorkflowForCurrentEditor();
+				const resourceKey = parsed.pathname.replace(/^\//, "");
+
+				if (resourceKey === "policy") {
+					return callback(null, JSON.stringify(uiPolicy, null, 2));
+				}
+
+				if (resourceKey === "workflow") {
+					return callback(null, workflowGuide);
+				}
+
+				return callback(`Resource not found: ${uri}`);
+			}
 
 			default:
 				callback(`Resource not found: ${uri}`);

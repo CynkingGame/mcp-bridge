@@ -65,6 +65,32 @@ npm run build
 - **多实例支持**: 如果默认端口 (3456) 被占用，插件会自动尝试端口+1 (如 3457)，直到找到可用端口。
 - **配置隔离**: 插件配置（是否自动启动、上次使用的端口）现已存储在项目目录 (`settings/mcp-bridge.json`) 中，不同项目的配置互不干扰。
 
+### 项目 UI Policy
+
+- 插件支持项目级 UI 策略文件，用于约束 AI 创建 UI 节点和 UI 预制体时的锚点、根节点拉伸和安全区行为。
+- 同一份策略文件也可声明 `autoNineSlice` 规则：当 AI 给节点赋上名字命中规则的 `SpriteFrame` 时，插件会自动补齐缺失的 9-slice 边距。
+- 项目级 workflow 文档也支持落在 Cocos 项目根目录，供 `cocos://ui/workflow` 直接读取。
+- 默认读取顺序：
+  - `packages/mcp-bridge/project-ui-policy.json`
+  - `settings/mcp-ui-policy.json`（若存在，则覆盖前者）
+- workflow 默认读取顺序：
+  - `settings/mcp-ui-workflow.md`
+  - `docs/ai-ui-workflow.md`
+  - 若都不存在，则回退到插件内置 workflow 文案
+- 当前内置能力适合这类约束：
+  - `button` 预设：按钮默认中心锚点
+  - `screen-root` 预设：全屏 prefab 根节点自动 `Widget/full`
+  - `safe-area-root` 预设：全屏交互根节点自动 `Widget/full + SafeArea`
+- 对已存在的节点，可使用 `apply_ui_policy` 直接补齐项目规范，而不必重建节点。
+- 对已经挂上场景/预制体的点9纹理，可使用 `ensure_current_9slice_textures` 扫描当前用到的资源并自动补齐缺失边距。
+- 对“同结构重复 3 次以上”的列表项、奖励格子、排行项，可使用 `scaffold_repeatable_ui` 一次性生成 Item prefab、容器 prefab 和脚本骨架。
+- 对 AI 自动化流程，推荐形成固定闭环：`create_node/create_prefab` -> `apply_ui_policy` -> `validate_ui_prefab`。
+- `autoNineSlice` 的处理标记会写入 `settings/mcp-bridge.json`，避免同一纹理被重复触发。
+- MCP 还会额外暴露两个标准资源：
+  - `cocos://ui/policy`
+  - `cocos://ui/workflow`
+  支持资源读取的 AI 客户端可以直接将其作为项目级提示上下文使用。
+
 ## 连接 AI 编辑器
 
 ### 自动化一键配置（推荐）
@@ -103,6 +129,23 @@ Args: [插件安装路径]/dist/mcp-proxy.js
 ```
 
 注意：请将上述配置中的路径替换为你自己项目中 `dist/mcp-proxy.js` 文件的实际绝对路径。
+
+如果你的 AI 编辑器支持直接配置 HTTP MCP URL，例如 Codex，可直接使用：
+
+```json
+{
+  "mcpServers": {
+    "mcp-bridge": {
+      "url": "http://127.0.0.1:3456"
+    }
+  }
+}
+```
+
+说明：
+- 当前插件已支持标准 HTTP JSON-RPC MCP 入口，默认挂在根路径 `/`。
+- 若你在面板中修改了端口，请将上面的 `3456` 替换为当前实际端口。
+- 旧的 `command + mcp-proxy.js` 方式仍然保留，兼容不支持 URL MCP 的客户端。
 
 ## 项目架构
 
@@ -198,7 +241,61 @@ mcp-bridge/
 ### 7. create_node
 
 - **描述**: 在当前场景中创建新节点
-- **参数**: `name`(必需), `parentId`, `type`(empty/sprite/label/button), `layout`(center/top/bottom/full 等)
+- **参数**: `name`(必需), `parentId`, `type`(empty/sprite/label/button), `layout`(center/top/bottom/full 等), `uiPreset`
+- **说明**:
+  - 当未传 `parentId` 且节点类型为 UI 节点时，插件会优先尝试自动挂到 `Canvas`
+  - `uiPreset` 会读取项目 UI policy，自动补锚点 / Widget / SafeArea
+  - `button` 类型默认会命中项目里的 `button` 预设（若存在）
+
+### 7.1 apply_ui_policy
+
+- **描述**: 将项目 UI policy 预设直接应用到现有节点
+- **参数**: `nodeId`(必需), `preset`
+- **说明**:
+  - 适用于已打开的 prefab 根节点、按钮或交互容器修正
+  - 常见用法：对全屏根节点应用 `screen-root` / `safe-area-root`，对按钮应用 `button`
+
+### 7.2 validate_ui_prefab
+
+- **描述**: 校验当前 UI 预制体/节点是否符合项目 UI policy
+- **参数**: `nodeId`(必需), `expectedRootPreset`
+- **返回**:
+  - `ok`: 是否通过
+  - `rootPreset`: 实际使用或推断的根节点预设
+  - `findings`: 问题列表
+- **当前检查项**:
+  - 根节点锚点是否符合项目 root preset
+  - 根节点是否具备对应的 `Widget` 布局
+  - 需要安全区时是否挂载 `SafeArea`
+  - 所有按钮节点是否使用中心锚点 `(0.5, 0.5)`
+
+### 7.3 ensure_current_9slice_textures
+
+- **描述**: 扫描当前场景或预制体里已经被 `Sprite` / `Button` 用到的纹理；若文件名命中项目 `autoNineSlice` 规则且当前 border 尚未设置，则自动补齐 9-slice。
+- **参数**: 无
+- **说明**:
+  - 适合在 AI 完成一轮 prefab/scene 修改后做一次兜底扫描
+  - 已处理过的纹理会写入项目标记，后续重复调用会自动跳过
+
+### 7.4 scaffold_repeatable_ui
+
+- **描述**: 为重复块 UI 直接生成脚手架资产，包括：
+  - Item prefab
+  - 列表容器 prefab
+  - Item 脚本
+  - Controller 脚本
+- **参数**:
+  - `itemName`
+  - `containerName`
+  - `prefabDir`
+  - `scriptDir`
+  - `fields`
+  - 可选：`listDirection`、`useScrollView`、`rootPreset`、`itemWidth`、`itemHeight`、`containerWidth`、`containerHeight`、`overwrite`
+- **说明**:
+  - 适合排行项、奖励格子、商店项、活动列表项等重复结构
+  - 工具会在脚本生成并刷新后，自动尝试将 Item 脚本挂到 Item prefab 根节点，并将 Controller 脚本挂到容器 prefab 根节点
+  - Controller 脚本会自动绑定 `itemPrefab` 属性
+  - Controller 脚本默认提供 `render(list)`，Item 脚本默认提供 `setData(data)`
 
 ### 8. manage_components
 
@@ -223,7 +320,10 @@ mcp-bridge/
 ### 12. scene_management / prefab_management
 
 - **描述**: 场景和预制体管理
-- **参数**: `action`(create/delete/duplicate/get_info), `path`, `nodeId`, `parentId`
+- **参数**: `action`(create/delete/duplicate/get_info), `path`, `nodeId`, `parentId`, `rootPreset`
+- **说明**:
+  - `prefab_management.create` 可传 `rootPreset`
+  - 若未显式传 `rootPreset`，插件会按项目 Canvas 设计分辨率自动识别“屏幕型”根节点，并补全根节点适配
 
 ### 13. manage_editor
 
@@ -235,9 +335,9 @@ mcp-bridge/
 - **描述**: 按条件搜索场景中的游戏对象
 - **参数**: `conditions`(name/component/active), `recursive`
 
-### 15. manage_material / manage_texture / manage_shader
+### 15. manage_material / manage_texture / ensure_current_9slice_textures / scaffold_repeatable_ui / manage_shader
 
-- **描述**: 管理材质、纹理、着色器资源
+- **描述**: 管理材质、纹理、九宫格扫描、重复块脚手架、着色器资源
 - **参数**: `action`, `path`, `properties`/`content`
 
 ### 16. execute_menu_item
@@ -293,7 +393,10 @@ mcp-bridge/
 ### 26. create_scene / create_prefab
 
 - **描述**: 创建场景文件 / 将场景节点保存为预制体
-- **参数**: `sceneName` / `nodeId` + `prefabName`
+- **参数**: `sceneName` / `nodeId` + `prefabName` + `rootPreset`
+- **说明**:
+  - `create_prefab` 适合从场景节点直接产出 UI prefab
+  - 对于全屏 UI 根节点，建议传 `rootPreset: "screen-root"` 或 `rootPreset: "safe-area-root"`
 
 ### 27. build_project
 

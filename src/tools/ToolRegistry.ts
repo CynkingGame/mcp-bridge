@@ -1,5 +1,9 @@
 // @ts-nocheck
+import { getUiPolicySummary, loadProjectUiPolicyForCurrentEditor } from "../utils/UiPolicyLoader";
+
 export const getToolsList = () => {
+	const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+	const uiPolicySummary = getUiPolicySummary(uiPolicy);
 	const globalPrecautions =
 		"【AI 安全守则】: 1. 执行任何写操作前必须先通过 get_scene_hierarchy 或 manage_components(get) 验证主体存在。 2. 严禁基于假设盲目猜测属性名。 3. 资源属性（如 cc.Prefab）必须通过 UUID 进行赋值。 4. 严禁频繁刷新全局资源 (refresh_editor)，必须通过 properties.path 指定具体修改的文件或目录以防止编辑器长期卡死。";
 	return [
@@ -88,12 +92,16 @@ export const getToolsList = () => {
 		},
 		{
 			name: "create_prefab",
-			description: `${globalPrecautions} 将场景中的某个节点保存为预制体资源`,
+			description: `${globalPrecautions} 将场景中的某个节点保存为预制体资源。对于全屏 UI 根节点，优先传入 rootPreset（如 screen-root / safe-area-root）或让插件按项目 Canvas 设计分辨率自动识别并补全根节点适配。`,
 			inputSchema: {
 				type: "object",
 				properties: {
 					nodeId: { type: "string", description: "节点 UUID" },
 					prefabName: { type: "string", description: "预制体名称" },
+					rootPreset: {
+						type: "string",
+						description: `可选的项目 UI 根节点预设名称。当前项目预设：${uiPolicySummary}`,
+					},
 				},
 				required: ["nodeId", "prefabName"],
 			},
@@ -113,6 +121,100 @@ export const getToolsList = () => {
 			},
 		},
 		{
+			name: "scaffold_repeatable_ui",
+			description: `${globalPrecautions} 为重复块 UI 生成脚手架。会直接创建 Item prefab、容器 prefab、Item 脚本和 Controller 脚本，适用于列表项、奖励格子、排行项等“同结构重复 3 次以上”的界面。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					itemName: { type: "string", description: "重复项预制体名称，如 RankItem" },
+					containerName: { type: "string", description: "列表容器预制体名称，如 RankList" },
+					prefabDir: { type: "string", description: "预制体目录，如 db://assets/prefabs/rank" },
+					scriptDir: { type: "string", description: "脚本目录，如 db://assets/scripts/ui/rank" },
+					fields: {
+						type: "array",
+						description: "重复项字段定义。label 用于文本，sprite 用于图片占位。",
+						items: {
+							type: "object",
+							properties: {
+								name: { type: "string", description: "字段名，如 rank / icon / score" },
+								type: {
+									type: "string",
+									enum: ["label", "sprite"],
+									description: "字段类型",
+								},
+								placeholder: { type: "string", description: "可选的占位文本" },
+								width: { type: "number", description: "字段节点宽度" },
+								height: { type: "number", description: "字段节点高度" },
+							},
+							required: ["name", "type"],
+						},
+					},
+					listDirection: {
+						type: "string",
+						enum: ["vertical", "horizontal", "grid"],
+						description: "容器中的内容布局方向",
+					},
+					useScrollView: { type: "boolean", description: "是否创建带 ScrollView 的容器" },
+					rootPreset: {
+						type: "string",
+						description: `容器 prefab 根节点的项目 UI 预设。当前项目预设：${uiPolicySummary}`,
+					},
+					itemWidth: { type: "number", description: "Item 根节点宽度" },
+					itemHeight: { type: "number", description: "Item 根节点高度" },
+					containerWidth: { type: "number", description: "容器根节点宽度" },
+					containerHeight: { type: "number", description: "容器根节点高度" },
+					overwrite: { type: "boolean", description: "若资源已存在，是否覆盖" },
+				},
+				required: ["itemName", "containerName", "prefabDir", "scriptDir", "fields"],
+			},
+		},
+		{
+			name: "import_design_layout",
+			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原层级、尺寸、文本样式、内嵌图片和纯色块。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					jsonPath: {
+						type: "string",
+						description: "设计节点 JSON 路径。支持项目相对路径、绝对路径或 db:// 路径。",
+					},
+					prefabName: {
+						type: "string",
+						description: "输出 prefab 名称，如 HallPrizePanel。",
+					},
+					prefabDir: {
+						type: "string",
+						description: "输出 prefab 目录，如 db://assets/prefabs/hall。",
+					},
+					assetOutputDir: {
+						type: "string",
+						description: "导入过程中生成图片资源的目录，如 db://assets/textures/design/hall。",
+					},
+					imageAssetDir: {
+						type: "string",
+						description: "设计师单独提供的图片素材目录，如 db://assets/art/hall/prize。图片节点会优先从这里按名称匹配资源。",
+					},
+					imageAssetMap: {
+						type: "object",
+						description: "可选的显式图片映射。key 可填节点名或设计节点 id，value 为目标 Sprite 资源路径。用于自动匹配不稳定时的精确绑定。",
+					},
+					rootPreset: {
+						type: "string",
+						description: `根节点 UI 预设。当前项目预设：${uiPolicySummary}`,
+					},
+					importGeneratedShapes: {
+						type: "boolean",
+						description: "是否为纯色块/圆角块自动生成贴图资源，默认 true。",
+					},
+					overwrite: {
+						type: "boolean",
+						description: "若目标 prefab 或导入资源已存在，是否覆盖。",
+					},
+				},
+				required: ["jsonPath", "prefabName"],
+			},
+		},
+		{
 			name: "open_prefab",
 			description: `在编辑器中打开预制体文件进入编辑模式。注意：这是一个异步操作，打开后请等待几秒。`,
 			inputSchema: {
@@ -128,7 +230,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "create_node",
-			description: `${globalPrecautions} 在当前场景中创建一个新节点。重要提示：1. 如果指定 parentId，必须先通过 get_scene_hierarchy 确保该父节点真实存在且未被删除。2. 类型说明：'sprite' (100x100 尺寸 + 默认贴图), 'button' (150x50 尺寸 + 深色底图 + Button组件), 'label' (120x40 尺寸 + Label组件), 'empty' (纯空节点)。`,
+			description: `${globalPrecautions} 在当前场景中创建一个新节点。重要提示：1. 如果指定 parentId，必须先通过 get_scene_hierarchy 确保该父节点真实存在且未被删除。2. 类型说明：'sprite' (100x100 尺寸 + 默认贴图), 'button' (150x50 尺寸 + 深色底图 + Button组件), 'label' (120x40 尺寸 + Label组件), 'empty' (纯空节点)。3. 当前项目启用了 UI policy，优先使用 uiPreset / layout，而不是手动猜测坐标。项目预设：${uiPolicySummary}`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -159,8 +261,42 @@ export const getToolsList = () => {
 						description:
 							"自动挂载 cc.Widget 并进行快捷排版适配。推荐绝大多数 UI 元素在创建时使用此参数替代手动指定坐标。",
 					},
+					uiPreset: {
+						type: "string",
+						description: `可选的项目 UI 预设名称。预设可同时约束锚点、布局和安全区。当前项目预设：${uiPolicySummary}`,
+					},
 				},
 				required: ["name"],
+			},
+		},
+		{
+			name: "apply_ui_policy",
+			description: `${globalPrecautions} 将项目 UI policy 预设直接应用到现有节点。适用于已经打开的 prefab / scene 中的根节点、按钮或交互容器修正。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					nodeId: { type: "string", description: "目标节点 UUID" },
+					preset: {
+						type: "string",
+						description: `项目 UI 预设名称。当前项目预设：${uiPolicySummary}`,
+					},
+				},
+				required: ["nodeId", "preset"],
+			},
+		},
+		{
+			name: "validate_ui_prefab",
+			description: `${globalPrecautions} 校验当前 UI 预制体/节点是否符合项目 UI policy。默认检查根节点适配与按钮锚点，可用于 AI 修改 prefab 后的自检。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					nodeId: { type: "string", description: "待校验的根节点 UUID" },
+					expectedRootPreset: {
+						type: "string",
+						description: `可选的预期根节点预设。若不传，插件会按项目 Canvas 和节点尺寸自动推断。当前项目预设：${uiPolicySummary}`,
+					},
+				},
+				required: ["nodeId"],
 			},
 		},
 		{
@@ -257,7 +393,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "prefab_management",
-			description: `${globalPrecautions} 预制体管理`,
+			description: `${globalPrecautions} 预制体管理。对于 UI 预制体创建，优先传入 rootPreset 以套用项目根节点适配策略。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -269,6 +405,10 @@ export const getToolsList = () => {
 					path: { type: "string", description: "预制体路径，如 db://assets/prefabs/NewPrefab.prefab" },
 					nodeId: { type: "string", description: "节点 ID (用于 create 操作)" },
 					parentId: { type: "string", description: "父节点 ID (用于 instantiate 操作)" },
+					rootPreset: {
+						type: "string",
+						description: `可选的项目 UI 根节点预设名称。当前项目预设：${uiPolicySummary}`,
+					},
 				},
 				required: ["action", "path"],
 			},
@@ -354,6 +494,14 @@ export const getToolsList = () => {
 					properties: { type: "object", description: "纹理属性" },
 				},
 				required: ["action", "path"],
+			},
+		},
+		{
+			name: "ensure_current_9slice_textures",
+			description: `${globalPrecautions} 扫描当前场景或预制体里已经用到的 Sprite/Button 纹理；若文件名命中项目 autoNineSlice 规则且 border 尚未设置，则自动补齐 9-slice，并把处理结果写入项目标记避免重复触发。`,
+			inputSchema: {
+				type: "object",
+				properties: {},
 			},
 		},
 		{

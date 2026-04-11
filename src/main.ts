@@ -2,6 +2,7 @@ import { HttpServer } from './core/HttpServer';
 import { McpRouter } from './core/McpRouter';
 import { Logger } from './core/Logger';
 import { IpcManager } from './IpcManager';
+import { AutoNineSliceService } from "./core/AutoNineSliceService";
 declare const Editor: any;
 
 export = {
@@ -130,6 +131,21 @@ export = {
 			this.getProfile().set("auto-start", value);
 			this.getProfile().save();
 			Logger.info(`自动启动已设置为: ${value}`);
+		},
+		"auto-ensure-nine-slice-for-asset"(event, args) {
+			const uuid = args && args.uuid;
+			AutoNineSliceService.ensureForAssignedAsset(uuid, (err, result) => {
+				if (err) {
+					Logger.warn(`[auto-nine-slice] ${err}`);
+				} else if (result && result.status === "updated") {
+					Logger.info(
+						`[auto-nine-slice] 已自动配置 ${result.textureName || result.textureUrl} -> [${result.border.join(", ")}]`,
+					);
+				}
+				if (event && event.reply) {
+					event.reply(err, result);
+				}
+			});
 		},
 
 		"inspect-apis"() {
@@ -265,7 +281,7 @@ export = {
 		"mcp-scan-clients"(event) {
 			try {
 				const { scanMcpClients } = require('./McpConfigurator');
-				if (event.reply) event.reply(null, scanMcpClients());
+				if (event.reply) event.reply(null, scanMcpClients(HttpServer.config.port || 3456));
 			} catch (e) {
 				if (event.reply) event.reply(new Error(e.message));
 			}
@@ -274,7 +290,7 @@ export = {
 		"mcp-inject-client"(event, clientId) {
 			try {
 				const { injectMcpConfig } = require('./McpConfigurator');
-				const log = injectMcpConfig(clientId === -1 ? undefined : clientId);
+				const log = injectMcpConfig(clientId === -1 ? undefined : clientId, HttpServer.config.port || 3456);
 				if (event.reply) event.reply(null, log);
 			} catch (e) {
 				if (event.reply) event.reply(new Error("写入报错: " + e.message));
@@ -284,7 +300,7 @@ export = {
 		"mcp-get-payload"(event) {
 			try {
 				const { getPayload } = require('./McpConfigurator');
-				if (event.reply) event.reply(null, getPayload());
+				if (event.reply) event.reply(null, getPayload(undefined, HttpServer.config.port || 3456));
 			} catch (e) {
 				if (event.reply) event.reply(new Error(e.message));
 			}

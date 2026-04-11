@@ -1,5 +1,8 @@
 
 "use strict";
+import { resolveCreateNodePolicy, resolveNamedUiPreset, resolvePrefabRootPolicy } from "./utils/UiPolicy";
+import { validateUiTree } from "./utils/UiPolicyValidation";
+import { resolvePreferredSpriteSizeMode } from "./utils/AutoNineSlice";
 
 /**
  * 更加健壮的节点查找函数，支持解压后的 UUID
@@ -21,6 +24,736 @@ const findNode = (id) => {
         }
     }
     return node;
+};
+
+const getCanvasComponent = (scene) => {
+    if (!scene) return null;
+    return scene.getComponentInChildren(cc.Canvas);
+};
+
+const getCanvasDesignResolution = (scene, uiPolicy) => {
+    const canvasComp = getCanvasComponent(scene);
+    if (canvasComp && canvasComp.designResolution) {
+        return {
+            width: canvasComp.designResolution.width,
+            height: canvasComp.designResolution.height,
+        };
+    }
+    const fallback = uiPolicy && uiPolicy.canvas && uiPolicy.canvas.designResolution;
+    if (fallback) {
+        return {
+            width: fallback.width,
+            height: fallback.height,
+        };
+    }
+    return null;
+};
+
+const ensureWidget = (node) => {
+    return node.getComponent(cc.Widget) || node.addComponent(cc.Widget);
+};
+
+const resetWidgetAlignment = (widget) => {
+    widget.target = null;
+    widget.alignMode = cc.Widget.AlignMode.ONCE;
+    widget.isAlignTop = false;
+    widget.isAlignBottom = false;
+    widget.isAlignLeft = false;
+    widget.isAlignRight = false;
+    widget.isAlignHorizontalCenter = false;
+    widget.isAlignVerticalCenter = false;
+    widget.top = 0;
+    widget.bottom = 0;
+    widget.left = 0;
+    widget.right = 0;
+    widget.horizontalCenter = 0;
+    widget.verticalCenter = 0;
+    widget.isAbsoluteTop = true;
+    widget.isAbsoluteBottom = true;
+    widget.isAbsoluteLeft = true;
+    widget.isAbsoluteRight = true;
+    widget.isAbsoluteHorizontalCenter = true;
+    widget.isAbsoluteVerticalCenter = true;
+};
+
+const applyLayoutToWidget = (widget, layout) => {
+    if (!widget || !layout) return;
+    resetWidgetAlignment(widget);
+
+    switch (layout) {
+        case "center":
+            widget.isAlignHorizontalCenter = true;
+            widget.isAlignVerticalCenter = true;
+            break;
+        case "full":
+            widget.isAlignTop = true;
+            widget.isAlignBottom = true;
+            widget.isAlignLeft = true;
+            widget.isAlignRight = true;
+            break;
+        case "top":
+            widget.isAlignTop = true;
+            widget.isAlignHorizontalCenter = true;
+            break;
+        case "bottom":
+            widget.isAlignBottom = true;
+            widget.isAlignHorizontalCenter = true;
+            break;
+        case "left":
+            widget.isAlignLeft = true;
+            widget.isAlignVerticalCenter = true;
+            break;
+        case "right":
+            widget.isAlignRight = true;
+            widget.isAlignVerticalCenter = true;
+            break;
+        case "top-left":
+            widget.isAlignTop = true;
+            widget.isAlignLeft = true;
+            break;
+        case "top-right":
+            widget.isAlignTop = true;
+            widget.isAlignRight = true;
+            break;
+        case "bottom-left":
+            widget.isAlignBottom = true;
+            widget.isAlignLeft = true;
+            break;
+        case "bottom-right":
+            widget.isAlignBottom = true;
+            widget.isAlignRight = true;
+            break;
+    }
+};
+
+const getSpriteFrameUuid = (spriteFrame) => {
+    if (!spriteFrame) return null;
+    return spriteFrame._uuid || spriteFrame._rawFilesUuid || null;
+};
+
+const collectCurrentSpriteAssetUuids = () => {
+    const collected = new Set();
+    const addSpriteFrame = (spriteFrame) => {
+        const uuid = getSpriteFrameUuid(spriteFrame);
+        if (uuid) {
+            collected.add(uuid);
+        }
+    };
+    const visit = (node) => {
+        if (!node) return;
+        const sprite = node.getComponent(cc.Sprite);
+        if (sprite) {
+            addSpriteFrame(sprite.spriteFrame);
+        }
+        const button = node.getComponent(cc.Button);
+        if (button) {
+            ["normalSprite", "pressedSprite", "hoverSprite", "disabledSprite"].forEach((key) => {
+                addSpriteFrame(button[key]);
+            });
+        }
+        node.children.forEach((child) => visit(child));
+    };
+    const scene = cc.director.getScene();
+    if (scene) {
+        visit(scene);
+    }
+    return Array.from(collected);
+};
+
+const extractTextureUrl = (assetUrl) => {
+    if (!assetUrl || typeof assetUrl !== "string") return null;
+    const matched = assetUrl.match(/^(db:\/\/.+?\.(png|jpg|jpeg|webp))/i);
+    return matched ? matched[1] : assetUrl;
+};
+
+const readSpriteAssetMetaInfo = (uuid) => {
+    if (!uuid || !Editor || !Editor.assetdb) {
+        return null;
+    }
+    try {
+        const sourceUrl =
+            (Editor.assetdb.remote && Editor.assetdb.remote.uuidToUrl && Editor.assetdb.remote.uuidToUrl(uuid)) ||
+            Editor.assetdb.uuidToUrl(uuid);
+        if (!sourceUrl) {
+            return null;
+        }
+        const textureUrl = extractTextureUrl(sourceUrl);
+        if (!textureUrl) {
+            return null;
+        }
+        const fspath = Editor.assetdb.urlToFspath(textureUrl);
+        if (!fspath) {
+            return null;
+        }
+        const fs = require("fs");
+        const path = require("path");
+        const metaPath = fspath + ".meta";
+        let subMeta = null;
+        if (fs.existsSync(metaPath)) {
+            const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+            if (meta && meta.subMetas) {
+                const subKey = sourceUrl.indexOf(textureUrl + "/") === 0 ? sourceUrl.slice(textureUrl.length + 1) : "";
+                if (subKey && meta.subMetas[subKey]) {
+                    subMeta = meta.subMetas[subKey];
+                } else {
+                    const firstKey = Object.keys(meta.subMetas)[0];
+                    subMeta = firstKey ? meta.subMetas[firstKey] : null;
+                }
+            }
+        }
+        return {
+            textureName: path.basename(textureUrl),
+            subMeta,
+        };
+    } catch (_error) {
+        return null;
+    }
+};
+
+const applyPreferredSpriteSizeMode = (sprite, uiPolicy, uuid) => {
+    if (!sprite || !cc || !cc.Sprite || !cc.Sprite.SizeMode) {
+        return;
+    }
+    const metaInfo = readSpriteAssetMetaInfo(uuid);
+    const preferredMode = resolvePreferredSpriteSizeMode(
+        uiPolicy,
+        (metaInfo && metaInfo.textureName) || "",
+        metaInfo && metaInfo.subMeta,
+    );
+    sprite.sizeMode =
+        preferredMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
+};
+
+const applyResolvedUiPolicyToNode = (node, resolvedPolicy) => {
+    if (!node || !resolvedPolicy) return;
+
+    if (resolvedPolicy.anchor) {
+        node.anchorX = Number(resolvedPolicy.anchor.x);
+        node.anchorY = Number(resolvedPolicy.anchor.y);
+    }
+
+    if (resolvedPolicy.layout) {
+        const widget = ensureWidget(node);
+        applyLayoutToWidget(widget, resolvedPolicy.layout);
+    }
+
+    if (resolvedPolicy.safeArea && !node.getComponent(cc.SafeArea)) {
+        node.addComponent(cc.SafeArea);
+    }
+};
+
+const captureUiState = (node) => {
+    const widget = node.getComponent(cc.Widget);
+    const safeArea = node.getComponent(cc.SafeArea);
+    return {
+        anchorX: node.anchorX,
+        anchorY: node.anchorY,
+        hadWidget: !!widget,
+        widget: widget
+            ? {
+                  enabled: widget.enabled,
+                  target: widget.target,
+                  alignMode: widget.alignMode,
+                  isAlignTop: widget.isAlignTop,
+                  isAlignBottom: widget.isAlignBottom,
+                  isAlignLeft: widget.isAlignLeft,
+                  isAlignRight: widget.isAlignRight,
+                  isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
+                  isAlignVerticalCenter: widget.isAlignVerticalCenter,
+                  top: widget.top,
+                  bottom: widget.bottom,
+                  left: widget.left,
+                  right: widget.right,
+                  horizontalCenter: widget.horizontalCenter,
+                  verticalCenter: widget.verticalCenter,
+                  isAbsoluteTop: widget.isAbsoluteTop,
+                  isAbsoluteBottom: widget.isAbsoluteBottom,
+                  isAbsoluteLeft: widget.isAbsoluteLeft,
+                  isAbsoluteRight: widget.isAbsoluteRight,
+                  isAbsoluteHorizontalCenter: widget.isAbsoluteHorizontalCenter,
+                  isAbsoluteVerticalCenter: widget.isAbsoluteVerticalCenter,
+              }
+            : null,
+        hadSafeArea: !!safeArea,
+        safeAreaEnabled: safeArea ? safeArea.enabled : false,
+    };
+};
+
+const restoreUiState = (node, snapshot) => {
+    if (!node || !snapshot) return;
+
+    node.anchorX = snapshot.anchorX;
+    node.anchorY = snapshot.anchorY;
+
+    let widget = node.getComponent(cc.Widget);
+    if (!snapshot.hadWidget) {
+        if (widget) {
+            node.removeComponent(widget);
+        }
+    } else {
+        widget = widget || node.addComponent(cc.Widget);
+        widget.enabled = snapshot.widget.enabled;
+        widget.target = snapshot.widget.target;
+        widget.alignMode = snapshot.widget.alignMode;
+        widget.isAlignTop = snapshot.widget.isAlignTop;
+        widget.isAlignBottom = snapshot.widget.isAlignBottom;
+        widget.isAlignLeft = snapshot.widget.isAlignLeft;
+        widget.isAlignRight = snapshot.widget.isAlignRight;
+        widget.isAlignHorizontalCenter = snapshot.widget.isAlignHorizontalCenter;
+        widget.isAlignVerticalCenter = snapshot.widget.isAlignVerticalCenter;
+        widget.top = snapshot.widget.top;
+        widget.bottom = snapshot.widget.bottom;
+        widget.left = snapshot.widget.left;
+        widget.right = snapshot.widget.right;
+        widget.horizontalCenter = snapshot.widget.horizontalCenter;
+        widget.verticalCenter = snapshot.widget.verticalCenter;
+        widget.isAbsoluteTop = snapshot.widget.isAbsoluteTop;
+        widget.isAbsoluteBottom = snapshot.widget.isAbsoluteBottom;
+        widget.isAbsoluteLeft = snapshot.widget.isAbsoluteLeft;
+        widget.isAbsoluteRight = snapshot.widget.isAbsoluteRight;
+        widget.isAbsoluteHorizontalCenter = snapshot.widget.isAbsoluteHorizontalCenter;
+        widget.isAbsoluteVerticalCenter = snapshot.widget.isAbsoluteVerticalCenter;
+    }
+
+    let safeArea = node.getComponent(cc.SafeArea);
+    if (!snapshot.hadSafeArea) {
+        if (safeArea) {
+            node.removeComponent(safeArea);
+        }
+    } else {
+        safeArea = safeArea || node.addComponent(cc.SafeArea);
+        safeArea.enabled = snapshot.safeAreaEnabled;
+    }
+};
+
+const snapshotNodeForValidation = (node) => {
+    if (!node) return null;
+
+    const widget = node.getComponent(cc.Widget);
+    const safeArea = node.getComponent(cc.SafeArea);
+    const components = (node._components || []).map((component) => cc.js.getClassName(component));
+
+    return {
+        name: node.name,
+        uuid: node.uuid,
+        anchor: {
+            x: node.anchorX,
+            y: node.anchorY,
+        },
+        size: {
+            width: node.width,
+            height: node.height,
+        },
+        components,
+        hasSafeArea: !!safeArea,
+        widget: widget
+            ? {
+                  isAlignTop: widget.isAlignTop,
+                  isAlignBottom: widget.isAlignBottom,
+                  isAlignLeft: widget.isAlignLeft,
+                  isAlignRight: widget.isAlignRight,
+                  isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
+                  isAlignVerticalCenter: widget.isAlignVerticalCenter,
+              }
+            : null,
+        children: node.children.map((child) => snapshotNodeForValidation(child)),
+    };
+};
+
+const generatePrefabFileId = () => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let result = "";
+    for (let i = 0; i < 22; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+};
+
+const serializeNodeToPrefabJson = (node, options) => {
+    const scene = cc.director.getScene();
+    const resolvedPrefabRootPolicy = resolvePrefabRootPolicy(options && options.uiPolicy, {
+        rootPreset: options && options.rootPreset,
+        nodeSize: {
+            width: node.width,
+            height: node.height,
+        },
+        canvasDesignResolution: getCanvasDesignResolution(scene, options && options.uiPolicy),
+    });
+    const nodeUiSnapshot = resolvedPrefabRootPolicy.shouldApply ? captureUiState(node) : null;
+
+    try {
+        if (resolvedPrefabRootPolicy.shouldApply) {
+            applyResolvedUiPolicyToNode(node, resolvedPrefabRootPolicy);
+        }
+
+        const serializedStr = Editor.serialize(node);
+        const sceneData = JSON.parse(serializedStr);
+
+        if (!Array.isArray(sceneData) || sceneData.length === 0) {
+            throw new Error("序列化数据格式异常");
+        }
+
+        let sceneIndex = -1;
+        for (let i = 0; i < sceneData.length; i++) {
+            if (sceneData[i].__type__ === "cc.Scene") {
+                sceneIndex = i;
+                break;
+            }
+        }
+
+        let filteredData: any[] = [];
+        let oldToNewIndex: any = {};
+        let newIndex = 1;
+
+        for (let i = 0; i < sceneData.length; i++) {
+            if (i === sceneIndex) {
+                oldToNewIndex[i] = -1;
+                continue;
+            }
+            oldToNewIndex[i] = newIndex;
+            filteredData.push(sceneData[i]);
+            newIndex++;
+        }
+
+        let rootNodeOldIndex = -1;
+        for (let i = 0; i < sceneData.length; i++) {
+            if (i === sceneIndex) continue;
+            if (sceneData[i].__type__ === "cc.Node") {
+                if (sceneData[i]._parent && sceneData[i]._parent.__id__ === sceneIndex) {
+                    rootNodeOldIndex = i;
+                    break;
+                }
+            }
+        }
+        if (rootNodeOldIndex === -1) {
+            for (let i = 0; i < sceneData.length; i++) {
+                if (i === sceneIndex) continue;
+                if (sceneData[i].__type__ === "cc.Node") {
+                    rootNodeOldIndex = i;
+                    break;
+                }
+            }
+        }
+
+        const rootNodeNewIndex = oldToNewIndex[rootNodeOldIndex];
+        let nodeEntries: any[] = [];
+        for (let i = 0; i < filteredData.length; i++) {
+            if (filteredData[i].__type__ === "cc.Node") {
+                nodeEntries.push({
+                    arrayIndex: i + 1,
+                    isRoot: i + 1 === rootNodeNewIndex,
+                });
+            }
+        }
+
+        let prefabData: any[] = [
+            {
+                __type__: "cc.Prefab",
+                _name: "",
+                _objFlags: 0,
+                _native: "",
+                data: { __id__: rootNodeNewIndex },
+                optimizationPolicy: 0,
+                asyncLoadAssets: false,
+                readonly: false,
+            },
+        ];
+
+        for (let i = 0; i < filteredData.length; i++) {
+            prefabData.push(filteredData[i]);
+        }
+
+        const updateRefs = (obj) => {
+            if (obj === null || obj === undefined || typeof obj !== "object") return;
+            if (Array.isArray(obj)) {
+                obj.forEach((item) => updateRefs(item));
+                return;
+            }
+            for (let key in obj) {
+                if (!obj.hasOwnProperty(key)) continue;
+                if (key === "__id__" && typeof obj[key] === "number") {
+                    const oldIdx = obj[key];
+                    if (oldToNewIndex.hasOwnProperty(oldIdx)) {
+                        obj[key] = oldToNewIndex[oldIdx];
+                    }
+                } else if (typeof obj[key] === "object" && obj[key] !== null) {
+                    updateRefs(obj[key]);
+                }
+            }
+        };
+
+        for (let i = 1; i < prefabData.length; i++) {
+            updateRefs(prefabData[i]);
+        }
+
+        let rootNodeObj = prefabData[rootNodeNewIndex];
+        if (rootNodeObj) {
+            rootNodeObj._parent = null;
+        }
+
+        for (let i = 1; i < prefabData.length; i++) {
+            if (prefabData[i]._id !== undefined) {
+                prefabData[i]._id = "";
+            }
+        }
+
+        let prefabInfoStartIndex = prefabData.length;
+        for (let ni = 0; ni < nodeEntries.length; ni++) {
+            let entry = nodeEntries[ni];
+            let prefabInfoIndex = prefabInfoStartIndex + ni;
+
+            let nodeObj = prefabData[entry.arrayIndex];
+            if (nodeObj) {
+                nodeObj._prefab = { __id__: prefabInfoIndex };
+            }
+
+            prefabData.push({
+                __type__: "cc.PrefabInfo",
+                root: { __id__: rootNodeNewIndex },
+                asset: { __id__: 0 },
+                fileId: entry.isRoot ? "" : generatePrefabFileId(),
+                sync: false,
+            });
+        }
+
+        return JSON.stringify(prefabData, null, 2);
+    } finally {
+        if (nodeUiSnapshot) {
+            restoreUiState(node, nodeUiSnapshot);
+        }
+    }
+};
+
+const configureRepeatableLayout = (layout, direction) => {
+    layout.resizeMode = cc.Layout.ResizeMode.CONTAINER;
+    layout.paddingLeft = 16;
+    layout.paddingRight = 16;
+    layout.paddingTop = 16;
+    layout.paddingBottom = 16;
+    layout.spacingX = 12;
+    layout.spacingY = 12;
+
+    if (direction === "horizontal") {
+        layout.type = cc.Layout.Type.HORIZONTAL;
+        return;
+    }
+    if (direction === "grid") {
+        layout.type = cc.Layout.Type.GRID;
+        layout.startAxis = cc.Layout.AxisDirection.HORIZONTAL;
+        layout.cellSize = cc.size(120, 120);
+        return;
+    }
+    layout.type = cc.Layout.Type.VERTICAL;
+};
+
+const createRepeatableFieldNode = (field) => {
+    const fieldNode = new cc.Node(field.nodeName || field.name);
+    fieldNode.anchorX = 0.5;
+    fieldNode.anchorY = 0.5;
+
+    if (field.type === "sprite") {
+        const sprite = fieldNode.addComponent(cc.Sprite);
+        sprite.sizeMode = cc.Sprite.SizeMode.RAW;
+        fieldNode.width = field.width || 72;
+        fieldNode.height = field.height || 72;
+        return fieldNode;
+    }
+
+    const label = fieldNode.addComponent(cc.Label);
+    label.string = field.placeholder || field.name;
+    fieldNode.width = field.width || 160;
+    fieldNode.height = field.height || 40;
+    return fieldNode;
+};
+
+const createRepeatableItemNode = (spec) => {
+    const itemNode = new cc.Node(spec.itemName);
+    itemNode.anchorX = 0.5;
+    itemNode.anchorY = 0.5;
+    itemNode.width = spec.itemWidth || 600;
+    itemNode.height = spec.itemHeight || 96;
+
+    const layout = itemNode.addComponent(cc.Layout);
+    layout.type = cc.Layout.Type.HORIZONTAL;
+    layout.resizeMode = cc.Layout.ResizeMode.CONTAINER;
+    layout.paddingLeft = 16;
+    layout.paddingRight = 16;
+    layout.paddingTop = 12;
+    layout.paddingBottom = 12;
+    layout.spacingX = 12;
+
+    (spec.fields || []).forEach((field) => {
+        itemNode.addChild(createRepeatableFieldNode(field));
+    });
+    layout.updateLayout();
+    return itemNode;
+};
+
+const createRepeatableContainerNode = (spec) => {
+    const containerNode = new cc.Node(spec.containerName);
+    containerNode.anchorX = 0.5;
+    containerNode.anchorY = 0.5;
+    containerNode.width = spec.containerWidth || 720;
+    containerNode.height = spec.containerHeight || 960;
+
+    let contentParent = containerNode;
+    if (spec.useScrollView) {
+        const mask = containerNode.addComponent(cc.Mask);
+        mask.type = cc.Mask.Type.RECT;
+        const scrollView = containerNode.addComponent(cc.ScrollView);
+        scrollView.horizontal = spec.listDirection !== "vertical";
+        scrollView.vertical = spec.listDirection !== "horizontal";
+        scrollView.inertia = true;
+        scrollView.elastic = true;
+
+        const content = new cc.Node("Content");
+        content.anchorX = 0.5;
+        content.anchorY = 1;
+        content.width = containerNode.width;
+        content.height = containerNode.height;
+        containerNode.addChild(content);
+        scrollView.content = content;
+        contentParent = content;
+    } else {
+        const content = new cc.Node("Content");
+        content.anchorX = 0.5;
+        content.anchorY = 1;
+        content.width = containerNode.width;
+        content.height = containerNode.height;
+        containerNode.addChild(content);
+        contentParent = content;
+    }
+
+    const layout = contentParent.addComponent(cc.Layout);
+    configureRepeatableLayout(layout, spec.listDirection);
+    layout.updateLayout();
+    return containerNode;
+};
+
+const applyDesignTextStyle = (node, textSpec) => {
+    if (!textSpec) {
+        return;
+    }
+    const label = node.getComponent(cc.Label) || node.addComponent(cc.Label);
+    label.string = textSpec.content || "";
+    label.fontSize = textSpec.fontSize || 24;
+    label.lineHeight = textSpec.lineHeight || label.fontSize;
+    label.useSystemFont = true;
+    label.fontFamily = textSpec.fontFamily || "Arial";
+    label.enableWrapText = true;
+    label.overflow = cc.Label.Overflow.CLAMP;
+    label.horizontalAlign =
+        textSpec.horizontalAlign === "RIGHT"
+            ? cc.Label.HorizontalAlign.RIGHT
+            : textSpec.horizontalAlign === "CENTER"
+              ? cc.Label.HorizontalAlign.CENTER
+              : cc.Label.HorizontalAlign.LEFT;
+    label.verticalAlign = cc.Label.VerticalAlign.CENTER;
+
+    if (textSpec.color) {
+        node.color = new cc.Color(
+            textSpec.color.r,
+            textSpec.color.g,
+            textSpec.color.b,
+            textSpec.color.a,
+        );
+    }
+
+    if (textSpec.outline) {
+        const outline = node.getComponent(cc.LabelOutline) || node.addComponent(cc.LabelOutline);
+        outline.width = textSpec.outline.width || 1;
+        outline.color = new cc.Color(
+            textSpec.outline.color.r,
+            textSpec.outline.color.g,
+            textSpec.outline.color.b,
+            textSpec.outline.color.a,
+        );
+    }
+
+    if (textSpec.shadow) {
+        const shadow = node.getComponent(cc.LabelShadow) || node.addComponent(cc.LabelShadow);
+        shadow.offset = cc.v2(textSpec.shadow.offsetX || 0, -(textSpec.shadow.offsetY || 0));
+        shadow.blur = textSpec.shadow.blur || 0;
+        shadow.color = new cc.Color(
+            textSpec.shadow.color.r,
+            textSpec.shadow.color.g,
+            textSpec.shadow.color.b,
+            textSpec.shadow.color.a,
+        );
+    }
+};
+
+const enqueueDesignSpriteLoad = (node, visual, pendingLoads) => {
+    if (!visual || !visual.spriteFrameUuid) {
+        return;
+    }
+
+    const sprite = node.getComponent(cc.Sprite) || node.addComponent(cc.Sprite);
+    sprite.sizeMode =
+        visual.preferredSizeMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
+    sprite.type = visual.useSliced ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
+
+    pendingLoads.push((done) => {
+        cc.assetManager.loadAny(visual.spriteFrameUuid, (err, asset) => {
+            if (!err && asset) {
+                sprite.spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+            }
+            done();
+        });
+    });
+};
+
+const createImportedDesignNode = (spec, pendingLoads) => {
+    const node = new cc.Node(spec.name || "DesignNode");
+    node.anchorX = 0.5;
+    node.anchorY = 0.5;
+    node.x = spec.position ? spec.position.x || 0 : 0;
+    node.y = spec.position ? spec.position.y || 0 : 0;
+    node.width = spec.size ? spec.size.width || 0 : 0;
+    node.height = spec.size ? spec.size.height || 0 : 0;
+    node.opacity = spec.opacity === undefined ? 255 : spec.opacity;
+    node.rotation = spec.rotation || 0;
+    node.active = spec.visible !== false;
+
+    if (spec.text) {
+        applyDesignTextStyle(node, spec.text);
+    }
+
+    enqueueDesignSpriteLoad(node, spec.visual, pendingLoads);
+
+    if (spec.isButton && !node.getComponent(cc.Button)) {
+        node.addComponent(cc.Button);
+    }
+
+    (spec.children || []).forEach((childSpec) => {
+        node.addChild(createImportedDesignNode(childSpec, pendingLoads));
+    });
+
+    return node;
+};
+
+const countImportedDesignNodes = (spec) => {
+    if (!spec) {
+        return 0;
+    }
+    return 1 + (spec.children || []).reduce((sum, child) => sum + countImportedDesignNodes(child), 0);
+};
+
+const runPendingDesignLoads = (pendingLoads, done) => {
+    if (!pendingLoads || pendingLoads.length === 0) {
+        done();
+        return;
+    }
+    let index = 0;
+    const next = () => {
+        if (index >= pendingLoads.length) {
+            done();
+            return;
+        }
+        const task = pendingLoads[index++];
+        task(() => next());
+    };
+    next();
 };
 
 export = {
@@ -219,6 +952,7 @@ export = {
     "create-node": function (event, args) {
         const { name, parentId, type } = args;
         const scene = cc.director.getScene();
+        const resolvedCreateNodePolicy = resolveCreateNodePolicy(args.uiPolicy, args);
         if (!scene) {
             if (event.reply) event.reply(new Error("场景尚未准备好或正在加载。"));
             return;
@@ -232,8 +966,17 @@ export = {
             let canvas = newNode.addComponent(cc.Canvas);
             newNode.addComponent(cc.Widget);
             // 设置默认设计分辨率
-            canvas.designResolution = cc.size(960, 640);
-            canvas.fitHeight = true;
+            const designResolution =
+                (args.uiPolicy &&
+                    args.uiPolicy.canvas &&
+                    args.uiPolicy.canvas.designResolution) || { width: 960, height: 640 };
+            canvas.designResolution = cc.size(designResolution.width, designResolution.height);
+            canvas.fitWidth =
+                !!(args.uiPolicy && args.uiPolicy.canvas && args.uiPolicy.canvas.fitWidth);
+            canvas.fitHeight =
+                args.uiPolicy && args.uiPolicy.canvas && args.uiPolicy.canvas.fitHeight !== undefined
+                    ? !!args.uiPolicy.canvas.fitHeight
+                    : true;
             // 自动在 Canvas 下创建一个 Camera
             let camNode = new cc.Node("Main Camera");
             camNode.addComponent(cc.Camera);
@@ -241,8 +984,8 @@ export = {
         } else if (type === "sprite") {
             newNode = new cc.Node(name || "新建精灵节点");
             let sprite = newNode.addComponent(cc.Sprite);
-            // 设置为 CUSTOM 模式
-            sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            // 默认先用 RAW，真实赋图后会根据是否为点9自动切换
+            sprite.sizeMode = cc.Sprite.SizeMode.RAW;
             // 为精灵设置默认尺寸
             newNode.width = 100;
             newNode.height = 100;
@@ -251,7 +994,9 @@ export = {
             if (args.defaultSpriteUuid) {
                 cc.assetManager.loadAny(args.defaultSpriteUuid, (err, asset) => {
                     if (!err && (asset instanceof cc.SpriteFrame || asset instanceof cc.Texture2D)) {
-                        sprite.spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+                        const spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+                        sprite.spriteFrame = spriteFrame;
+                        applyPreferredSpriteSizeMode(sprite, args.uiPolicy, getSpriteFrameUuid(spriteFrame));
                         Editor.Ipc.sendToMain("scene:dirty");
                     }
                 });
@@ -288,14 +1033,16 @@ export = {
             newNode = new cc.Node(name || "新建节点");
         }
 
+        applyResolvedUiPolicyToNode(newNode, resolvedCreateNodePolicy);
+
         // 设置层级
         let parent = null;
         if (parentId) {
             parent = findNode(parentId);
         } else {
             // 【Canvas Sniffing】如果是 UI 节点且未指定 parentId，尝试挂载到 Canvas
-            if (type === "sprite" || type === "button" || type === "label") {
-                const canvasComp = scene.getComponentInChildren(cc.Canvas);
+            if (resolvedCreateNodePolicy.autoParentToCanvas) {
+                const canvasComp = getCanvasComponent(scene);
                 if (canvasComp) {
                     parent = canvasComp.node;
                 }
@@ -305,79 +1052,6 @@ export = {
         if (parent) {
             newNode.parent = parent;
 
-            // 【Auto Layout】自动挂载和配置 cc.Widget
-            if (args.layout) {
-                let widget = newNode.addComponent(cc.Widget);
-                // 默认对齐模式为 ONCE
-                widget.alignMode = cc.Widget.AlignMode.ONCE;
-
-                switch (args.layout) {
-                    case "center":
-                        widget.isAlignHorizontalCenter = true;
-                        widget.isAlignVerticalCenter = true;
-                        widget.horizontalCenter = 0;
-                        widget.verticalCenter = 0;
-                        break;
-                    case "full":
-                        widget.isAlignTop = true;
-                        widget.isAlignBottom = true;
-                        widget.isAlignLeft = true;
-                        widget.isAlignRight = true;
-                        widget.top = 0;
-                        widget.bottom = 0;
-                        widget.left = 0;
-                        widget.right = 0;
-                        break;
-                    case "top":
-                        widget.isAlignTop = true;
-                        widget.isAlignHorizontalCenter = true;
-                        widget.top = 0;
-                        widget.horizontalCenter = 0;
-                        break;
-                    case "bottom":
-                        widget.isAlignBottom = true;
-                        widget.isAlignHorizontalCenter = true;
-                        widget.bottom = 0;
-                        widget.horizontalCenter = 0;
-                        break;
-                    case "left":
-                        widget.isAlignLeft = true;
-                        widget.isAlignVerticalCenter = true;
-                        widget.left = 0;
-                        widget.verticalCenter = 0;
-                        break;
-                    case "right":
-                        widget.isAlignRight = true;
-                        widget.isAlignVerticalCenter = true;
-                        widget.right = 0;
-                        widget.verticalCenter = 0;
-                        break;
-                    case "top-left":
-                        widget.isAlignTop = true;
-                        widget.isAlignLeft = true;
-                        widget.top = 0;
-                        widget.left = 0;
-                        break;
-                    case "top-right":
-                        widget.isAlignTop = true;
-                        widget.isAlignRight = true;
-                        widget.top = 0;
-                        widget.right = 0;
-                        break;
-                    case "bottom-left":
-                        widget.isAlignBottom = true;
-                        widget.isAlignLeft = true;
-                        widget.bottom = 0;
-                        widget.left = 0;
-                        break;
-                    case "bottom-right":
-                        widget.isAlignBottom = true;
-                        widget.isAlignRight = true;
-                        widget.bottom = 0;
-                        widget.right = 0;
-                        break;
-                }
-            }
             // 不要在这里同步调用 widget.updateAlignment()，因为此刻场景树的世界矩阵可能未刷新，
             // 导致 cc.Widget 计算出双倍的错误坐标（如将 405 算成 810）。
             // 让 Cocos 引擎在下一帧自动接管并对齐！
@@ -400,10 +1074,56 @@ export = {
                 if (canvasComp) {
                     canvasInfo = `CanvasSize(${parent.width}x${parent.height}) Design(${canvasComp.designResolution.width}x${canvasComp.designResolution.height})`;
                 }
-                event.reply(null, `节点创建成功 UUID: ${newNode.uuid}, 已挂载至 ${parent.name}${canvasInfo ? ' ' + canvasInfo : ''}. ComputedPos: (${newNode.x}, ${newNode.y})`);
+                const policyInfo = resolvedCreateNodePolicy.presetName
+                    ? ` UiPreset(${resolvedCreateNodePolicy.presetName})`
+                    : "";
+                event.reply(null, `节点创建成功 UUID: ${newNode.uuid}, 已挂载至 ${parent.name}${canvasInfo ? ' ' + canvasInfo : ''}${policyInfo}. ComputedPos: (${newNode.x}, ${newNode.y})`);
             }
         } else {
             if (event.reply) event.reply(new Error(`无法创建节点：找不到父节点 ${parentId}`));
+        }
+    },
+
+    "apply-ui-policy": function (event, args) {
+        const { nodeId, preset } = args;
+        const node = findNode(nodeId);
+        if (!node) {
+            if (event.reply) event.reply(new Error(`找不到节点: ${nodeId}`));
+            return;
+        }
+
+        const resolvedPreset = resolveNamedUiPreset(args.uiPolicy, preset);
+        if (!resolvedPreset.presetName) {
+            if (event.reply) event.reply(new Error(`未知的 UI 预设: ${preset}`));
+            return;
+        }
+
+        applyResolvedUiPolicyToNode(node, resolvedPreset);
+        Editor.Ipc.sendToMain("scene:dirty");
+        Editor.Ipc.sendToAll("scene:node-changed", {
+            uuid: node.uuid,
+        });
+
+        if (event.reply) {
+            event.reply(null, `已将 UI 预设 ${resolvedPreset.presetName} 应用到节点 ${node.name} (${node.uuid})`);
+        }
+    },
+
+    "validate-ui-prefab": function (event, args) {
+        const { nodeId, expectedRootPreset } = args;
+        const node = findNode(nodeId);
+        if (!node) {
+            if (event.reply) event.reply(new Error(`找不到节点: ${nodeId}`));
+            return;
+        }
+
+        const snapshot = snapshotNodeForValidation(node);
+        const result = validateUiTree(args.uiPolicy, snapshot, {
+            expectedRootPreset,
+        });
+
+        if (event.reply) {
+            event.reply(null, result);
         }
     },
 
@@ -524,6 +1244,7 @@ export = {
                             const uuids: any[] = isAssetArray ? (value as any[]) : [value];
                             const loadedAssets = [];
                             let loadedCount = 0;
+                            const autoNineSliceCandidateUuids = [];
 
                             if (uuids.length === 0) {
                                 component[key] = [];
@@ -587,6 +1308,9 @@ export = {
                                             );
                                         } else {
                                             loadedAssets[idx] = asset;
+                                            if (needsSpriteFrame && typeof targetUuid === "string") {
+                                                autoNineSliceCandidateUuids.push(targetUuid);
+                                            }
                                         }
                                     } else {
                                         Editor.warn(
@@ -594,15 +1318,26 @@ export = {
                                         );
                                     }
 
-                                    if (loadedCount === uuids.length) {
-                                        if (isAssetArray) {
-                                            // 过滤掉加载失败的
-                                            component[key] = loadedAssets.filter((a) => !!a);
-                                        } else {
-                                            if (loadedAssets[0]) component[key] = loadedAssets[0];
-                                        }
+                                        if (loadedCount === uuids.length) {
+                                            if (isAssetArray) {
+                                                // 过滤掉加载失败的
+                                                component[key] = loadedAssets.filter((a) => !!a);
+                                            } else {
+                                                if (loadedAssets[0]) component[key] = loadedAssets[0];
+                                                if (
+                                                    component instanceof cc.Sprite &&
+                                                    key === "spriteFrame" &&
+                                                    autoNineSliceCandidateUuids.length > 0
+                                                ) {
+                                                    applyPreferredSpriteSizeMode(
+                                                        component,
+                                                        args.uiPolicy,
+                                                        autoNineSliceCandidateUuids[0],
+                                                    );
+                                                }
+                                            }
 
-                                        // 通知编辑器 UI 更新
+                                            // 通知编辑器 UI 更新
                                         const compIndex = node._components.indexOf(component);
                                         if (compIndex !== -1) {
                                             Editor.Ipc.sendToPanel("scene", "scene:set-property", {
@@ -614,6 +1349,11 @@ export = {
                                             });
                                         }
                                         Editor.Ipc.sendToMain("scene:dirty");
+                                        Array.from(new Set(autoNineSliceCandidateUuids)).forEach((candidateUuid) => {
+                                            Editor.Ipc.sendToMain("mcp-bridge:auto-ensure-nine-slice-for-asset", {
+                                                uuid: candidateUuid,
+                                            });
+                                        });
                                     }
                                 });
                             });
@@ -1551,181 +2291,94 @@ export = {
         }
 
         try {
-            // 第一步：使用 Editor.serialize 获取原始序列化数据（场景格式）
-            const serializedStr = Editor.serialize(node);
-            const sceneData = JSON.parse(serializedStr);
-
-            if (!Array.isArray(sceneData) || sceneData.length === 0) {
-                if (event.reply) event.reply(new Error("序列化数据格式异常"));
-                return;
-            }
-
-            // 第二步：识别并移除 cc.Scene 对象，找到真正的根节点
-            // Editor.serialize 输出格式：[根节点(cc.Node), cc.Scene, 子节点..., 组件...]
-            // 根节点的 _parent 指向 cc.Scene
-            let sceneIndex = -1;
-            for (let i = 0; i < sceneData.length; i++) {
-                if (sceneData[i].__type__ === "cc.Scene") {
-                    sceneIndex = i;
-                    break;
-                }
-            }
-
-            // 移除 cc.Scene 并构建旧索引到新索引的映射
-            let filteredData = [];
-            let oldToNewIndex = {};
-            let newIndex = 0;
-
-            // 先留出索引 0 给 cc.Prefab
-            newIndex = 1;
-
-            for (let i = 0; i < sceneData.length; i++) {
-                if (i === sceneIndex) {
-                    // 跳过 cc.Scene
-                    oldToNewIndex[i] = -1;
-                    continue;
-                }
-                oldToNewIndex[i] = newIndex;
-                filteredData.push(sceneData[i]);
-                newIndex++;
-            }
-
-            // 第三步：为每个 cc.Node 生成 cc.PrefabInfo
-            // 需要知道根节点在新数组中的索引
-            let rootNodeOldIndex = -1;
-            for (let i = 0; i < sceneData.length; i++) {
-                if (i === sceneIndex) continue;
-                if (sceneData[i].__type__ === "cc.Node") {
-                    // 根节点是 _parent 指向 cc.Scene 的那个，或者是第一个 cc.Node
-                    if (sceneData[i]._parent && sceneData[i]._parent.__id__ === sceneIndex) {
-                        rootNodeOldIndex = i;
-                        break;
-                    }
-                }
-            }
-            // 如果没有找到指向 Scene 的根节点，使用第一个 cc.Node
-            if (rootNodeOldIndex === -1) {
-                for (let i = 0; i < sceneData.length; i++) {
-                    if (i === sceneIndex) continue;
-                    if (sceneData[i].__type__ === "cc.Node") {
-                        rootNodeOldIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            const rootNodeNewIndex = oldToNewIndex[rootNodeOldIndex]; // 根节点在新数组中的索引
-
-            // 收集所有 cc.Node 的新索引，用于给每个节点附加 PrefabInfo
-            let nodeEntries = []; // { newIndex, isRoot }
-            for (let i = 0; i < filteredData.length; i++) {
-                if (filteredData[i].__type__ === "cc.Node") {
-                    nodeEntries.push({
-                        arrayIndex: i + 1, // +1 因为 cc.Prefab 在索引 0
-                        isRoot: i + 1 === rootNodeNewIndex,
-                    });
-                }
-            }
-
-            // 生成 fileId 的简单方法（与 main.js 中的 generateFileId 逻辑一致）
-            function generateFileId() {
-                const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                let result = "";
-                for (let i = 0; i < 22; i++) {
-                    result += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-                return result;
-            }
-
-            // 第四步：构建最终的预制体数据数组
-            // 结构: [cc.Prefab, 根节点(cc.Node), 子节点..., 组件..., cc.PrefabInfo...]
-            let prefabData = [];
-
-            // 索引 0: cc.Prefab 包装器
-            prefabData.push({
-                __type__: "cc.Prefab",
-                _name: "",
-                _objFlags: 0,
-                _native: "",
-                data: { __id__: rootNodeNewIndex },
-                optimizationPolicy: 0,
-                asyncLoadAssets: false,
-                readonly: false,
-            });
-
-            // 添加过滤后的数据（所有原始对象，除了 cc.Scene）
-            for (let i = 0; i < filteredData.length; i++) {
-                prefabData.push(filteredData[i]);
-            }
-
-            // 第五步：更新所有 __id__ 引用（使用旧到新的索引映射）
-            function updateRefs(obj) {
-                if (obj === null || obj === undefined || typeof obj !== "object") return;
-                if (Array.isArray(obj)) {
-                    obj.forEach(function (item) {
-                        updateRefs(item);
-                    });
-                    return;
-                }
-                for (let key in obj) {
-                    if (!obj.hasOwnProperty(key)) continue;
-                    if (key === "__id__" && typeof obj[key] === "number") {
-                        let oldIdx = obj[key];
-                        if (oldToNewIndex.hasOwnProperty(oldIdx)) {
-                            obj[key] = oldToNewIndex[oldIdx];
-                        }
-                    } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                        updateRefs(obj[key]);
-                    }
-                }
-            }
-
-            // 更新 prefabData 中所有对象的 __id__ 引用（跳过索引 0 的 cc.Prefab，它的引用已经是新索引）
-            for (let i = 1; i < prefabData.length; i++) {
-                updateRefs(prefabData[i]);
-            }
-
-            // 第六步：修复根节点的 _parent 为 null
-            let rootNodeObj = prefabData[rootNodeNewIndex];
-            if (rootNodeObj) {
-                rootNodeObj._parent = null;
-            }
-
-            // 第七步：清空所有 _id 字段（预制体中节点的 _id 应为空，运行时由引擎分配）
-            for (let i = 1; i < prefabData.length; i++) {
-                if (prefabData[i]._id !== undefined) {
-                    prefabData[i]._id = "";
-                }
-            }
-
-            // 第八步：为每个 cc.Node 添加 cc.PrefabInfo
-            // PrefabInfo 追加在数组末尾
-            let prefabInfoStartIndex = prefabData.length;
-            for (let ni = 0; ni < nodeEntries.length; ni++) {
-                let entry = nodeEntries[ni];
-                let prefabInfoIndex = prefabInfoStartIndex + ni;
-
-                // 在节点上设置 _prefab 引用
-                let nodeObj = prefabData[entry.arrayIndex];
-                if (nodeObj) {
-                    nodeObj._prefab = { __id__: prefabInfoIndex };
-                }
-
-                // 创建 PrefabInfo 对象
-                prefabData.push({
-                    __type__: "cc.PrefabInfo",
-                    root: { __id__: rootNodeNewIndex },
-                    asset: { __id__: 0 },
-                    fileId: entry.isRoot ? "" : generateFileId(),
-                    sync: false,
-                });
-            }
-
-            // 第九步：序列化为 JSON 字符串
-            const result = JSON.stringify(prefabData, null, 2);
+            const result = serializeNodeToPrefabJson(node, args);
             if (event.reply) event.reply(null, result);
         } catch (e) {
             if (event.reply) event.reply(new Error(`序列化节点失败: ${e.message}`));
+        }
+    },
+
+    "scaffold-repeatable-ui": function (event, args) {
+        const scene = cc.director.getScene();
+        if (!scene) {
+            if (event.reply) event.reply(new Error("场景尚未准备好，无法创建重复块脚手架"));
+            return;
+        }
+
+        const tempRoot = new cc.Node("__MCP_REPEATABLE_UI_TEMP__");
+        tempRoot.parent = scene;
+
+        try {
+            const itemNode = createRepeatableItemNode(args.spec);
+            const containerNode = createRepeatableContainerNode(args.spec);
+            tempRoot.addChild(itemNode);
+            tempRoot.addChild(containerNode);
+
+            const itemPrefabContent = serializeNodeToPrefabJson(itemNode, {
+                uiPolicy: args.uiPolicy,
+            });
+            const containerPrefabContent = serializeNodeToPrefabJson(containerNode, {
+                uiPolicy: args.uiPolicy,
+                rootPreset: args.spec.rootPreset,
+            });
+
+            if (event.reply) {
+                event.reply(null, {
+                    itemPrefabContent,
+                    containerPrefabContent,
+                    itemFieldBindings: (args.spec.fields || []).map((field) => ({
+                        name: field.name,
+                        nodeName: field.nodeName,
+                        type: field.type,
+                    })),
+                    contentNodeName: "Content",
+                });
+            }
+        } catch (e) {
+            if (event.reply) event.reply(new Error(`创建重复块脚手架失败: ${e.message}`));
+        } finally {
+            tempRoot.destroy();
+        }
+    },
+
+    "import-design-layout": function (event, args) {
+        const scene = cc.director.getScene();
+        if (!scene) {
+            if (event.reply) event.reply(new Error("场景尚未准备好，无法导入设计布局"));
+            return;
+        }
+
+        const tempRoot = new cc.Node("__MCP_DESIGN_IMPORT_TEMP__");
+        tempRoot.parent = scene;
+
+        try {
+            const pendingLoads = [];
+            const rootNode = createImportedDesignNode(args.layout, pendingLoads);
+            tempRoot.addChild(rootNode);
+
+            runPendingDesignLoads(pendingLoads, () => {
+                try {
+                    const prefabContent = serializeNodeToPrefabJson(rootNode, {
+                        uiPolicy: args.uiPolicy,
+                        rootPreset: args.spec && args.spec.rootPreset,
+                    });
+                    if (event.reply) {
+                        event.reply(null, {
+                            prefabContent,
+                            nodeCount: countImportedDesignNodes(args.layout),
+                        });
+                    }
+                } catch (e) {
+                    if (event.reply) {
+                        event.reply(new Error(`导入设计布局失败: ${e.message}`));
+                    }
+                } finally {
+                    tempRoot.destroy();
+                }
+            });
+        } catch (e) {
+            tempRoot.destroy();
+            if (event.reply) event.reply(new Error(`导入设计布局失败: ${e.message}`));
         }
     },
 
@@ -1759,6 +2412,13 @@ export = {
             }
         } catch (e) {
             if (event.reply) event.reply(new Error("退出预制体模式发生异常: " + e.message));
+        }
+    },
+    "collect-current-sprite-assets": function (event, args) {
+        try {
+            if (event.reply) event.reply(null, collectCurrentSpriteAssetUuids());
+        } catch (e) {
+            if (event.reply) event.reply(new Error("收集当前 Sprite 资源失败: " + e.message));
         }
     },
 };
