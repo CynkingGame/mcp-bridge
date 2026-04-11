@@ -45,7 +45,6 @@ test("normalizeDesignImportArgs builds asset output paths", () => {
     assert.equal(spec.prefabPath, "db://assets/prefabs/hall/PrizePanel.prefab");
     assert.equal(spec.assetOutputDir, "db://assets/textures/design/hall/PrizePanel");
     assert.deepEqual(spec.imageAssetDirs, ["db://assets/art/hall/prize"]);
-    assert.equal(spec.importEmbeddedImages, false);
 });
 
 test("normalizeDesignLayoutDocument prefers provided image assets over embedded base64", () => {
@@ -89,15 +88,33 @@ test("normalizeDesignLayoutDocument prefers provided image assets over embedded 
     assert.equal(normalized.assetTasks.some((task) => task.kind === "embedded-image"), false);
 });
 
-test("normalizeDesignLayoutDocument can still opt in to embedded base64 import", () => {
+test("normalizeDesignLayoutDocument never exports embedded base64 images", () => {
     const normalized = designJson.normalizeDesignLayoutDocument(sampleDoc, {
         assetOutputDir: "db://assets/textures/design/hall/PrizePanel",
-        importEmbeddedImages: true,
     });
 
     const embeddedButtonAsset = normalized.assetTasks.find((task) => task.nodeId === "layer_144");
-    assert.ok(embeddedButtonAsset, "expected embedded image asset task");
-    assert.equal(embeddedButtonAsset.kind, "embedded-image");
-    assert.match(embeddedButtonAsset.path, /layer_144_btn\.png$/);
-    assert.equal(Buffer.isBuffer(embeddedButtonAsset.content), true);
+    assert.equal(embeddedButtonAsset, undefined);
+    assert.equal(normalized.assetTasks.some((task) => task.kind === "embedded-image"), false);
+});
+
+test("normalizeDesignLayoutDocument prefers explicit imageAssetMap over generated shapes", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(sampleDoc, {
+        assetOutputDir: "db://assets/textures/design/hall/PrizePanel",
+        imageAssetMap: {
+            btn: "db://assets/hall/textures/hall/ludo-按钮黄.png",
+            "返回": "db://assets/hall/textures/hall/返回（共用）.png",
+        },
+    });
+
+    const actionGroup = normalized.root.children
+        .flatMap((child) => child.children || [])
+        .find((child) => child.name === "开始");
+    const buttonNode = actionGroup.children.find((child) => child.name === "btn");
+
+    assert.equal(buttonNode.visual.assetPath, "db://assets/hall/textures/hall/ludo-按钮黄.png");
+    assert.equal(
+        normalized.assetTasks.some((task) => task.path.includes("layer_144")),
+        false,
+    );
 });

@@ -194,13 +194,13 @@ export const getToolsList = () => {
 						type: "string",
 						description: "设计师单独提供的图片素材目录，如 db://assets/art/hall/prize。图片节点会优先从这里按名称匹配资源。",
 					},
+					imageAssetMap: {
+						type: "object",
+						description: "可选的显式图片映射。key 可填节点名或设计节点 id，value 为目标 Sprite 资源路径。用于自动匹配不稳定时的精确绑定。",
+					},
 					rootPreset: {
 						type: "string",
 						description: `根节点 UI 预设。当前项目预设：${uiPolicySummary}`,
-					},
-					importEmbeddedImages: {
-						type: "boolean",
-						description: "是否允许回退导入 JSON 里携带的 base64 图片，默认 false。通常应优先使用 imageAssetDir 中的正式素材。",
 					},
 					importGeneratedShapes: {
 						type: "boolean",

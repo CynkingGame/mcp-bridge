@@ -1034,7 +1034,7 @@ export class ToolDispatcher {
 			normalizedLayout = normalizeDesignLayoutDocument(rawDocument, {
 				assetOutputDir: spec.assetOutputDir,
 				imageAssetPaths,
-				importEmbeddedImages: spec.importEmbeddedImages,
+				imageAssetMap: spec.imageAssetMap,
 				importGeneratedShapes: spec.importGeneratedShapes,
 			});
 		} catch (e) {

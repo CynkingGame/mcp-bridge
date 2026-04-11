@@ -8,8 +8,8 @@ export interface DesignImportInput {
 	assetOutputDir?: string;
 	imageAssetDir?: string;
 	imageAssetDirs?: string[];
+	imageAssetMap?: Record<string, string>;
 	rootPreset?: string | null;
-	importEmbeddedImages?: boolean;
 	importGeneratedShapes?: boolean;
 	overwrite?: boolean;
 }
@@ -21,8 +21,8 @@ export interface DesignImportSpec {
 	prefabPath: string;
 	assetOutputDir: string;
 	imageAssetDirs: string[];
+	imageAssetMap: Record<string, string>;
 	rootPreset: string | null;
-	importEmbeddedImages: boolean;
 	importGeneratedShapes: boolean;
 	overwrite: boolean;
 }
@@ -70,7 +70,7 @@ export interface NormalizedDesignNode {
 export interface DesignAssetTask {
 	nodeId: string;
 	path: string;
-	kind: "embedded-image" | "generated-shape";
+	kind: "generated-shape";
 	content: Buffer;
 	useSliced: boolean;
 	preferredSizeMode: "RAW" | "CUSTOM";
@@ -117,21 +117,6 @@ function sanitizeStem(input: string): string {
 		.replace(/_+/g, "_")
 		.replace(/^_+|_+$/g, "");
 	return cleaned || "asset";
-}
-
-function parseDataUri(dataUri: string): { extension: string; content: Buffer } | null {
-	if (!dataUri || typeof dataUri !== "string") {
-		return null;
-	}
-	const matched = dataUri.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
-	if (!matched) {
-		return null;
-	}
-	const extension = matched[1].toLowerCase() === "jpeg" ? "jpg" : matched[1].toLowerCase();
-	return {
-		extension,
-		content: Buffer.from(matched[2], "base64"),
-	};
 }
 
 function normalizeColor(input: any, fallbackAlpha = 1) {
@@ -284,6 +269,18 @@ function resolveProvidedImageAsset(node: any, imageAssetLookup: Map<string, stri
 	return null;
 }
 
+function resolveMappedImageAsset(node: any, imageAssetMap: Record<string, string> | undefined): string | null {
+	if (!imageAssetMap) {
+		return null;
+	}
+	const byId = node?.id ? imageAssetMap[String(node.id)] : null;
+	if (byId) {
+		return byId;
+	}
+	const byName = node?.name ? imageAssetMap[String(node.name)] : null;
+	return byName || null;
+}
+
 function pushAssetTask(
 	tasks: DesignAssetTask[],
 	seenPaths: Set<string>,
@@ -312,15 +309,23 @@ function createNodeVisual(
 	frame: RectLike,
 	options: {
 		assetOutputDir: string;
-		importEmbeddedImages: boolean;
 		importGeneratedShapes: boolean;
 		imageAssetLookup: Map<string, string>;
+		imageAssetMap?: Record<string, string>;
 	},
 	tasks: DesignAssetTask[],
 	seenPaths: Set<string>,
 ): NormalizedDesignVisualSpec | null {
 	const stem = createAssetStem(node);
 	const sliced = shouldUseSliced(node);
+	const mappedAssetPath = resolveMappedImageAsset(node, options.imageAssetMap);
+	if (mappedAssetPath) {
+		return {
+			assetPath: mappedAssetPath,
+			preferredSizeMode: sliced ? "CUSTOM" : "RAW",
+			useSliced: sliced,
+		};
+	}
 	const providedAssetPath = resolveProvidedImageAsset(node, options.imageAssetLookup);
 	if (providedAssetPath) {
 		return {
@@ -329,16 +334,8 @@ function createNodeVisual(
 			useSliced: sliced,
 		};
 	}
-	const parsedData = parseDataUri(node?.assetsRef?.imageData);
-	if (parsedData && options.importEmbeddedImages) {
-		return pushAssetTask(tasks, seenPaths, {
-			nodeId: String(node?.id || stem),
-			path: `${options.assetOutputDir}/${stem}.${parsedData.extension}`,
-			kind: "embedded-image",
-			content: parsedData.content,
-			useSliced: sliced,
-			preferredSizeMode: sliced ? "CUSTOM" : "RAW",
-		});
+	if (node?.type === "image") {
+		return null;
 	}
 
 	if (!options.importGeneratedShapes || !hasVisualFill(node)) {
@@ -361,9 +358,9 @@ function normalizeNodeTree(
 	parentFrame: RectLike | null,
 	options: {
 		assetOutputDir: string;
-		importEmbeddedImages: boolean;
 		importGeneratedShapes: boolean;
 		imageAssetLookup: Map<string, string>;
+		imageAssetMap?: Record<string, string>;
 	},
 	tasks: DesignAssetTask[],
 	seenPaths: Set<string>,
@@ -422,8 +419,8 @@ export function normalizeDesignImportArgs(input: DesignImportInput): DesignImpor
 		prefabPath: `${prefabDir}/${prefabName}.prefab`,
 		assetOutputDir: `${assetBaseDir}/${prefabName}`,
 		imageAssetDirs,
+		imageAssetMap: input.imageAssetMap || {},
 		rootPreset: input.rootPreset || null,
-		importEmbeddedImages: !!input.importEmbeddedImages,
 		importGeneratedShapes: input.importGeneratedShapes !== false,
 		overwrite: !!input.overwrite,
 	};
@@ -434,7 +431,7 @@ export function normalizeDesignLayoutDocument(
 	options: {
 		assetOutputDir: string;
 		imageAssetPaths?: string[];
-		importEmbeddedImages?: boolean;
+		imageAssetMap?: Record<string, string>;
 		importGeneratedShapes?: boolean;
 	},
 ): NormalizedDesignLayoutDocument {
@@ -450,9 +447,9 @@ export function normalizeDesignLayoutDocument(
 		null,
 		{
 			assetOutputDir: ensureDbPath(options?.assetOutputDir, "db://assets/textures/design-import"),
-			importEmbeddedImages: !!options?.importEmbeddedImages,
 			importGeneratedShapes: options?.importGeneratedShapes !== false,
 			imageAssetLookup,
+			imageAssetMap: options?.imageAssetMap || {},
 		},
 		assetTasks,
 		seenPaths,
