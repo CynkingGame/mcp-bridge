@@ -5,9 +5,65 @@ import * as crypto from 'crypto';
 import { Logger } from './Logger';
 import { CommandQueue } from './CommandQueue';
 import { loadProjectUiPolicyForCurrentEditor, loadProjectUiWorkflowForCurrentEditor } from '../utils/UiPolicyLoader';
+import {
+	buildDesignImportPlannerPrompt,
+	buildUiWorkflowPrompt,
+	getUiPromptDefinitions,
+} from "../utils/UiPolicyPrompt";
 declare const Editor: any;
 
 export class McpWrappers {
+  static getPromptMap() {
+		const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+		return {
+			"ui-workflow-guardrails": {
+				name: "ui-workflow-guardrails",
+				description: "基于当前项目 UI policy/workflow 生成执行守则提示词",
+				arguments: getUiPromptDefinitions().find((item) => item.name === "ui-workflow-guardrails")?.arguments || [],
+				build: (args: Record<string, any>) => buildUiWorkflowPrompt(uiPolicy, args && args.task),
+			},
+			"design-import-planner": {
+				name: "design-import-planner",
+				description: "生成 analyze-first 的设计导入工作流提示词",
+				arguments: getUiPromptDefinitions().find((item) => item.name === "design-import-planner")?.arguments || [],
+				build: (args: Record<string, any>) =>
+					buildDesignImportPlannerPrompt(uiPolicy, {
+						jsonPath: args && args.jsonPath,
+						task: args && args.task,
+					}),
+			},
+		};
+	}
+
+  static getPromptsList() {
+		return Object.values(McpWrappers.getPromptMap()).map((item) => ({
+			name: item.name,
+			description: item.description,
+			arguments: item.arguments,
+		}));
+	}
+
+  static handleGetPrompt(name, args, callback) {
+		const promptEntry = McpWrappers.getPromptMap()[name];
+		if (!promptEntry) {
+			return callback(`Prompt not found: ${name}`);
+		}
+
+		const text = promptEntry.build(args || {});
+		callback(null, {
+			description: promptEntry.description,
+			messages: [
+				{
+					role: "user",
+					content: {
+						type: "text",
+						text,
+					},
+				},
+			],
+		});
+	}
+
   static getResourceMap() {
 		const uiPolicy = loadProjectUiPolicyForCurrentEditor();
 		const workflowGuide = loadProjectUiWorkflowForCurrentEditor();

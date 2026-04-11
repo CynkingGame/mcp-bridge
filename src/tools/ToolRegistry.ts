@@ -169,8 +169,43 @@ export const getToolsList = () => {
 			},
 		},
 		{
+			name: "analyze_design_layout",
+			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失和显式素材映射，再决定 import_design_layout 参数。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					jsonPath: {
+						type: "string",
+						description: "设计节点 JSON 路径。支持项目相对路径、绝对路径或 db:// 路径。",
+					},
+					assetOutputDir: {
+						type: "string",
+						description: "兼容旧参数的资源输出目录，如 db://assets/textures/design/hall。当前导入流程不会自动生成图片资源。",
+					},
+					imageAssetDir: {
+						type: "string",
+						description: "设计师单独提供的图片素材目录，如 db://assets/art/hall/prize。",
+					},
+					imageAssetDirs: {
+						type: "array",
+						description: "可选的多个正式素材目录。",
+						items: { type: "string" },
+					},
+					imageAssetMap: {
+						type: "object",
+						description: "可选的显式图片映射。用于先验证 AI 准备好的映射是否完整。",
+					},
+					strictImageAssets: {
+						type: "boolean",
+						description: "兼容旧参数。当前会始终按正式素材模式评估图片节点，缺图视为未满足导入条件。",
+					},
+				},
+				required: ["jsonPath"],
+			},
+		},
+		{
 			name: "import_design_layout",
-			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原层级、尺寸、文本样式、内嵌图片和纯色块。`,
+			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原层级、尺寸、文本样式，并且只使用你提供的正式图片资源。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -188,7 +223,7 @@ export const getToolsList = () => {
 					},
 					assetOutputDir: {
 						type: "string",
-						description: "导入过程中生成图片资源的目录，如 db://assets/textures/design/hall。",
+						description: "兼容旧参数的资源目录，如 db://assets/textures/design/hall。当前导入流程不会自动生成图片资源。",
 					},
 					imageAssetDir: {
 						type: "string",
@@ -202,9 +237,9 @@ export const getToolsList = () => {
 						type: "string",
 						description: `根节点 UI 预设。当前项目预设：${uiPolicySummary}`,
 					},
-					importGeneratedShapes: {
+					strictImageAssets: {
 						type: "boolean",
-						description: "是否为纯色块/圆角块自动生成贴图资源，默认 true。",
+						description: "兼容旧参数。当前始终强制正式图片资源模式；如果仍有图片节点未绑定正式素材，则直接失败。",
 					},
 					overwrite: {
 						type: "boolean",

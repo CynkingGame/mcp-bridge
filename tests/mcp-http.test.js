@@ -27,6 +27,8 @@ test("handleJsonRpcRequest supports standard MCP initialize and notifications", 
             callTool: async () => ({}),
             listResources: async () => [],
             readResource: async () => ({ contents: [] }),
+            listPrompts: async () => [],
+            getPrompt: async () => ({}),
         },
     );
 
@@ -35,6 +37,7 @@ test("handleJsonRpcRequest supports standard MCP initialize and notifications", 
     assert.equal(initialize.result.protocolVersion, "2024-11-05");
     assert.ok(initialize.result.capabilities.tools);
     assert.ok(initialize.result.capabilities.resources);
+    assert.ok(initialize.result.capabilities.prompts);
 
     const notification = await mcpProtocol.handleJsonRpcRequest(
         {
@@ -47,6 +50,8 @@ test("handleJsonRpcRequest supports standard MCP initialize and notifications", 
             callTool: async () => ({}),
             listResources: async () => [],
             readResource: async () => ({ contents: [] }),
+            listPrompts: async () => [],
+            getPrompt: async () => ({}),
         },
     );
 
@@ -68,6 +73,8 @@ test("handleJsonRpcRequest supports tools and resources over standard MCP", asyn
             readResource: async () => ({
                 contents: [{ uri: "cocos://ui/workflow", mimeType: "text/markdown", text: "# workflow" }],
             }),
+            listPrompts: async () => [{ name: "design-import-planner" }],
+            getPrompt: async () => ({ messages: [] }),
         },
     );
     assert.deepEqual(responseList.result.tools, [{ name: "import_design_layout" }]);
@@ -89,6 +96,8 @@ test("handleJsonRpcRequest supports tools and resources over standard MCP", asyn
             }),
             listResources: async () => [],
             readResource: async () => ({ contents: [] }),
+            listPrompts: async () => [],
+            getPrompt: async () => ({ messages: [] }),
         },
     );
     assert.equal(responseCall.result.content[0].text, "import_design_layout:hall_info/test.json");
@@ -105,9 +114,61 @@ test("handleJsonRpcRequest supports tools and resources over standard MCP", asyn
             callTool: async () => ({}),
             listResources: async () => [{ uri: "cocos://ui/workflow" }],
             readResource: async () => ({ contents: [] }),
+            listPrompts: async () => [],
+            getPrompt: async () => ({ messages: [] }),
         },
     );
     assert.deepEqual(responseResources.result.resources, [{ uri: "cocos://ui/workflow" }]);
+});
+
+test("handleJsonRpcRequest supports standard MCP prompts", async () => {
+    const responseList = await mcpProtocol.handleJsonRpcRequest(
+        {
+            jsonrpc: "2.0",
+            id: 5,
+            method: "prompts/list",
+            params: {},
+        },
+        {
+            listTools: async () => [],
+            callTool: async () => ({}),
+            listResources: async () => [],
+            readResource: async () => ({ contents: [] }),
+            listPrompts: async () => [{ name: "design-import-planner" }],
+            getPrompt: async () => ({
+                description: "prompt",
+                messages: [{ role: "user", content: { type: "text", text: "planner" } }],
+            }),
+        },
+    );
+
+    assert.deepEqual(responseList.result.prompts, [{ name: "design-import-planner" }]);
+
+    const responseGet = await mcpProtocol.handleJsonRpcRequest(
+        {
+            jsonrpc: "2.0",
+            id: 6,
+            method: "prompts/get",
+            params: {
+                name: "design-import-planner",
+                arguments: { jsonPath: "hall_info/test.json" },
+            },
+        },
+        {
+            listTools: async () => [],
+            callTool: async () => ({}),
+            listResources: async () => [],
+            readResource: async () => ({ contents: [] }),
+            listPrompts: async () => [],
+            getPrompt: async (name, args) => ({
+                description: name,
+                messages: [{ role: "user", content: { type: "text", text: args.jsonPath } }],
+            }),
+        },
+    );
+
+    assert.equal(responseGet.result.description, "design-import-planner");
+    assert.equal(responseGet.result.messages[0].content.text, "hall_info/test.json");
 });
 
 test("buildClientMcpServerConfig uses url transport for Codex", () => {

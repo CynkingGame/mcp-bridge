@@ -10,6 +10,8 @@ export interface McpProtocolDeps {
 	callTool: (name: string, args: Record<string, any>) => Promise<any> | any;
 	listResources: () => Promise<any[]> | any[];
 	readResource: (uri: string) => Promise<any> | any;
+	listPrompts?: () => Promise<any[]> | any[];
+	getPrompt?: (name: string, args: Record<string, any>) => Promise<any> | any;
 }
 
 function successResponse(id: string | number | null | undefined, result: any) {
@@ -53,6 +55,7 @@ export async function handleJsonRpcRequest(
 			capabilities: {
 				tools: {},
 				resources: {},
+				prompts: {},
 			},
 			serverInfo: {
 				name: "mcp-bridge",
@@ -93,8 +96,15 @@ export async function handleJsonRpcRequest(
 
 	if (method === "prompts/list") {
 		return successResponse(id, {
-			prompts: [],
+			prompts: deps.listPrompts ? await deps.listPrompts() : [],
 		});
+	}
+
+	if (method === "prompts/get") {
+		if (!deps.getPrompt) {
+			return errorResponse(id, -32601, "Method not found: prompts/get");
+		}
+		return successResponse(id, await deps.getPrompt(params.name, params.arguments || {}));
 	}
 
 	return errorResponse(id, -32601, `Method not found: ${method}`);

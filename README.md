@@ -70,6 +70,7 @@ npm run build
 - 插件支持项目级 UI 策略文件，用于约束 AI 创建 UI 节点和 UI 预制体时的锚点、根节点拉伸和安全区行为。
 - 同一份策略文件也可声明 `autoNineSlice` 规则：当 AI 给节点赋上名字命中规则的 `SpriteFrame` 时，插件会自动补齐缺失的 9-slice 边距。
 - 项目级 workflow 文档也支持落在 Cocos 项目根目录，供 `cocos://ui/workflow` 直接读取。
+- MCP 还会额外暴露标准 prompts，适合把“先分析、再决策、后执行”的工作流直接前置给支持 prompts 的 AI 客户端。
 - 默认读取顺序：
   - `packages/mcp-bridge/project-ui-policy.json`
   - `settings/mcp-ui-policy.json`（若存在，则覆盖前者）
@@ -85,11 +86,16 @@ npm run build
 - 对已经挂上场景/预制体的点9纹理，可使用 `ensure_current_9slice_textures` 扫描当前用到的资源并自动补齐缺失边距。
 - 对“同结构重复 3 次以上”的列表项、奖励格子、排行项，可使用 `scaffold_repeatable_ui` 一次性生成 Item prefab、容器 prefab 和脚本骨架。
 - 对 AI 自动化流程，推荐形成固定闭环：`create_node/create_prefab` -> `apply_ui_policy` -> `validate_ui_prefab`。
+- 对设计稿导入流程，推荐形成固定闭环：`analyze_design_layout` -> AI 明确补齐 `imageAssetMap/rootPreset` -> `import_design_layout` -> `validate_ui_prefab`。
 - `autoNineSlice` 的处理标记会写入 `settings/mcp-bridge.json`，避免同一纹理被重复触发。
 - MCP 还会额外暴露两个标准资源：
   - `cocos://ui/policy`
   - `cocos://ui/workflow`
   支持资源读取的 AI 客户端可以直接将其作为项目级提示上下文使用。
+- MCP 还会暴露两个标准 prompts：
+  - `ui-workflow-guardrails`
+  - `design-import-planner`
+  支持 prompts 的 AI 客户端可以直接把这两类提示词拉入当前任务上下文。
 
 ## 连接 AI 编辑器
 

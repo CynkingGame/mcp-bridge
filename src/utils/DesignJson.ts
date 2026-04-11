@@ -1,5 +1,4 @@
 import path from "path";
-import zlib from "zlib";
 
 export interface DesignImportInput {
 	jsonPath: string;
@@ -11,6 +10,7 @@ export interface DesignImportInput {
 	imageAssetMap?: Record<string, string>;
 	rootPreset?: string | null;
 	importGeneratedShapes?: boolean;
+	strictImageAssets?: boolean;
 	overwrite?: boolean;
 }
 
@@ -24,6 +24,7 @@ export interface DesignImportSpec {
 	imageAssetMap: Record<string, string>;
 	rootPreset: string | null;
 	importGeneratedShapes: boolean;
+	strictImageAssets: boolean;
 	overwrite: boolean;
 }
 
@@ -50,6 +51,7 @@ export interface NormalizedDesignVisualSpec {
 	assetPath: string;
 	preferredSizeMode: "RAW" | "CUSTOM";
 	useSliced: boolean;
+	source: "explicit-map" | "asset-dir";
 }
 
 export interface NormalizedDesignNode {
@@ -79,6 +81,32 @@ export interface DesignAssetTask {
 export interface NormalizedDesignLayoutDocument {
 	root: NormalizedDesignNode;
 	assetTasks: DesignAssetTask[];
+}
+
+export interface DesignLayoutAnalysisNode {
+	id: string;
+	name: string;
+	nodeType: "container" | "image" | "text";
+	size: { width: number; height: number };
+	assetPath?: string | null;
+	source?: "explicit-map" | "asset-dir" | "missing";
+	useSliced?: boolean;
+}
+
+export interface DesignLayoutAnalysis {
+	summary: {
+		totalNodes: number;
+		imageNodes: number;
+		textNodes: number;
+		containerNodes: number;
+		buttonLikeNodes: number;
+		resolvedImageNodes: number;
+		missingImageNodes: number;
+		generatedShapeNodes: number;
+	};
+	resolvedImageNodes: DesignLayoutAnalysisNode[];
+	missingImageNodes: DesignLayoutAnalysisNode[];
+	generatedShapeNodes: DesignLayoutAnalysisNode[];
 }
 
 interface RectLike {
@@ -129,16 +157,6 @@ function normalizeColor(input: any, fallbackAlpha = 1) {
 		b: clamp(Math.round(Number(input.b) || 0), 0, 255),
 		a: clamp(Math.round((input.a === undefined ? fallbackAlpha : Number(input.a)) * 255), 0, 255),
 	};
-}
-
-function hasVisualFill(node: any): boolean {
-	const style = (node && node.style) || {};
-	return !!(
-		style &&
-		(style.backgroundColor || style.border) &&
-		Number(node?.frame?.width) > 0 &&
-		Number(node?.frame?.height) > 0
-	);
 }
 
 function mapHorizontalAlign(value: string): "LEFT" | "CENTER" | "RIGHT" {
@@ -281,42 +299,13 @@ function resolveMappedImageAsset(node: any, imageAssetMap: Record<string, string
 	return byName || null;
 }
 
-function pushAssetTask(
-	tasks: DesignAssetTask[],
-	seenPaths: Set<string>,
-	task: DesignAssetTask,
-): NormalizedDesignVisualSpec | null {
-	if (!task || !task.path) {
-		return null;
-	}
-	if (!seenPaths.has(task.path)) {
-		tasks.push(task);
-		seenPaths.add(task.path);
-	}
-	return {
-		assetPath: task.path,
-		preferredSizeMode: task.preferredSizeMode,
-		useSliced: task.useSliced,
-	};
-}
-
-function createAssetStem(node: any): string {
-	return sanitizeStem(`${node?.id || "node"}_${node?.name || "visual"}`);
-}
-
 function createNodeVisual(
 	node: any,
-	frame: RectLike,
 	options: {
-		assetOutputDir: string;
-		importGeneratedShapes: boolean;
 		imageAssetLookup: Map<string, string>;
 		imageAssetMap?: Record<string, string>;
 	},
-	tasks: DesignAssetTask[],
-	seenPaths: Set<string>,
 ): NormalizedDesignVisualSpec | null {
-	const stem = createAssetStem(node);
 	const sliced = shouldUseSliced(node);
 	const mappedAssetPath = resolveMappedImageAsset(node, options.imageAssetMap);
 	if (mappedAssetPath) {
@@ -324,6 +313,7 @@ function createNodeVisual(
 			assetPath: mappedAssetPath,
 			preferredSizeMode: sliced ? "CUSTOM" : "RAW",
 			useSliced: sliced,
+			source: "explicit-map",
 		};
 	}
 	const providedAssetPath = resolveProvidedImageAsset(node, options.imageAssetLookup);
@@ -332,33 +322,16 @@ function createNodeVisual(
 			assetPath: providedAssetPath,
 			preferredSizeMode: sliced ? "CUSTOM" : "RAW",
 			useSliced: sliced,
+			source: "asset-dir",
 		};
 	}
-	if (node?.type === "image") {
-		return null;
-	}
-
-	if (!options.importGeneratedShapes || !hasVisualFill(node)) {
-		return null;
-	}
-
-	const buffer = createRoundedRectTexture(frame.width, frame.height, node?.style || {});
-	return pushAssetTask(tasks, seenPaths, {
-		nodeId: String(node?.id || stem),
-		path: `${options.assetOutputDir}/${stem}_shape.png`,
-		kind: "generated-shape",
-		content: buffer,
-		useSliced: false,
-		preferredSizeMode: "RAW",
-	});
+	return null;
 }
 
 function normalizeNodeTree(
 	node: any,
 	parentFrame: RectLike | null,
 	options: {
-		assetOutputDir: string;
-		importGeneratedShapes: boolean;
 		imageAssetLookup: Map<string, string>;
 		imageAssetMap?: Record<string, string>;
 	},
@@ -393,7 +366,7 @@ function normalizeNodeTree(
 		visible: node?.visible !== false,
 		isButton: looksLikeButton(node?.name),
 		text: buildTextSpec(node),
-		visual: createNodeVisual(node, effectiveFrame, options, tasks, seenPaths),
+		visual: createNodeVisual(node, options),
 		children: (Array.isArray(node?.children) ? node.children : []).map((child) =>
 			normalizeNodeTree(child, effectiveFrame, options, tasks, seenPaths),
 		),
@@ -421,7 +394,8 @@ export function normalizeDesignImportArgs(input: DesignImportInput): DesignImpor
 		imageAssetDirs,
 		imageAssetMap: input.imageAssetMap || {},
 		rootPreset: input.rootPreset || null,
-		importGeneratedShapes: input.importGeneratedShapes !== false,
+		importGeneratedShapes: false,
+		strictImageAssets: true,
 		overwrite: !!input.overwrite,
 	};
 }
@@ -446,8 +420,6 @@ export function normalizeDesignLayoutDocument(
 		document.node,
 		null,
 		{
-			assetOutputDir: ensureDbPath(options?.assetOutputDir, "db://assets/textures/design-import"),
-			importGeneratedShapes: options?.importGeneratedShapes !== false,
 			imageAssetLookup,
 			imageAssetMap: options?.imageAssetMap || {},
 		},
@@ -461,116 +433,67 @@ export function normalizeDesignLayoutDocument(
 	};
 }
 
-function createRoundedRectTexture(width: number, height: number, style: any): Buffer {
-	const pixelWidth = Math.max(1, Math.round(width));
-	const pixelHeight = Math.max(1, Math.round(height));
-	const fillColor = normalizeColor(style?.backgroundColor, 1) || { r: 255, g: 255, b: 255, a: 255 };
-	const border = style?.border || null;
-	const borderColor = border ? normalizeColor(border.color, 1) || fillColor : null;
-	const borderWidth = border ? Math.max(0, Math.round(Number(border.width) || 0)) : 0;
-	const radius = Math.max(0, Math.round(Number(style?.borderRadius) || 0));
-	const raw = Buffer.alloc((pixelWidth * 4 + 1) * pixelHeight);
+export function analyzeNormalizedDesignLayout(layout: NormalizedDesignLayoutDocument): DesignLayoutAnalysis {
+	const resolvedImageNodes: DesignLayoutAnalysisNode[] = [];
+	const missingImageNodes: DesignLayoutAnalysisNode[] = [];
+	const generatedShapeNodes: DesignLayoutAnalysisNode[] = [];
+	const summary = {
+		totalNodes: 0,
+		imageNodes: 0,
+		textNodes: 0,
+		containerNodes: 0,
+		buttonLikeNodes: 0,
+		resolvedImageNodes: 0,
+		missingImageNodes: 0,
+		generatedShapeNodes: 0,
+	};
 
-	for (let y = 0; y < pixelHeight; y++) {
-		const rowOffset = y * (pixelWidth * 4 + 1);
-		raw[rowOffset] = 0;
-		for (let x = 0; x < pixelWidth; x++) {
-			const px = x + 0.5;
-			const py = y + 0.5;
-			const outerInside = isInsideRoundedRect(px, py, pixelWidth, pixelHeight, radius);
-			let rgba = { r: 0, g: 0, b: 0, a: 0 };
-			if (outerInside) {
-				rgba = fillColor;
-				if (borderColor && borderWidth > 0) {
-					const innerInside = isInsideRoundedRect(
-						px - borderWidth,
-						py - borderWidth,
-						Math.max(1, pixelWidth - borderWidth * 2),
-						Math.max(1, pixelHeight - borderWidth * 2),
-						Math.max(0, radius - borderWidth),
-					);
-					rgba = innerInside ? fillColor : borderColor;
-				}
+	const visit = (node: NormalizedDesignNode) => {
+		summary.totalNodes++;
+		if (node.nodeType === "image") {
+			summary.imageNodes++;
+		} else if (node.nodeType === "text") {
+			summary.textNodes++;
+		} else {
+			summary.containerNodes++;
+		}
+		if (node.isButton) {
+			summary.buttonLikeNodes++;
+		}
+
+		if (node.nodeType === "image") {
+			if (node.visual) {
+				summary.resolvedImageNodes++;
+				resolvedImageNodes.push({
+					id: node.id,
+					name: node.name,
+					nodeType: node.nodeType,
+					size: node.size,
+					assetPath: node.visual.assetPath,
+					source: node.visual.source,
+					useSliced: node.visual.useSliced,
+				});
+			} else {
+				summary.missingImageNodes++;
+				missingImageNodes.push({
+					id: node.id,
+					name: node.name,
+					nodeType: node.nodeType,
+					size: node.size,
+					source: "missing",
+				});
 			}
-
-			const pixelOffset = rowOffset + 1 + x * 4;
-			raw[pixelOffset] = rgba.r;
-			raw[pixelOffset + 1] = rgba.g;
-			raw[pixelOffset + 2] = rgba.b;
-			raw[pixelOffset + 3] = rgba.a;
 		}
-	}
 
-	return encodePng(pixelWidth, pixelHeight, raw);
-}
+		(node.children || []).forEach(visit);
+	};
 
-function isInsideRoundedRect(px: number, py: number, width: number, height: number, radius: number): boolean {
-	if (width <= 0 || height <= 0) {
-		return false;
-	}
-	const limit = Math.min(radius, width / 2, height / 2);
-	if (limit <= 0) {
-		return px >= 0 && px <= width && py >= 0 && py <= height;
-	}
-	if (px >= limit && px <= width - limit) {
-		return py >= 0 && py <= height;
-	}
-	if (py >= limit && py <= height - limit) {
-		return px >= 0 && px <= width;
-	}
-	const cx = px < limit ? limit : width - limit;
-	const cy = py < limit ? limit : height - limit;
-	const dx = px - cx;
-	const dy = py - cy;
-	return dx * dx + dy * dy <= limit * limit;
-}
+	visit(layout.root);
 
-function encodePng(width: number, height: number, rawData: Buffer): Buffer {
-	const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-	const ihdr = Buffer.alloc(13);
-	ihdr.writeUInt32BE(width, 0);
-	ihdr.writeUInt32BE(height, 4);
-	ihdr[8] = 8;
-	ihdr[9] = 6;
-	ihdr[10] = 0;
-	ihdr[11] = 0;
-	ihdr[12] = 0;
-
-	const chunks = [
-		createPngChunk("IHDR", ihdr),
-		createPngChunk("IDAT", zlib.deflateSync(rawData)),
-		createPngChunk("IEND", Buffer.alloc(0)),
-	];
-
-	return Buffer.concat([signature, ...chunks]);
-}
-
-function createPngChunk(type: string, data: Buffer): Buffer {
-	const typeBuffer = Buffer.from(type, "ascii");
-	const length = Buffer.alloc(4);
-	length.writeUInt32BE(data.length, 0);
-	const crcBuffer = Buffer.concat([typeBuffer, data]);
-	const crc = Buffer.alloc(4);
-	crc.writeUInt32BE(crc32(crcBuffer), 0);
-	return Buffer.concat([length, typeBuffer, data, crc]);
-}
-
-const CRC_TABLE = (() => {
-	const table = new Uint32Array(256);
-	for (let i = 0; i < 256; i++) {
-		let value = i;
-		for (let j = 0; j < 8; j++) {
-			value = (value & 1) !== 0 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-		}
-		table[i] = value >>> 0;
-	}
-	return table;
-})();
-
-function crc32(buffer: Buffer): number {
-	let crc = 0xffffffff;
-	for (const value of buffer) {
-		crc = CRC_TABLE[(crc ^ value) & 0xff] ^ (crc >>> 8);
-	}
-	return (crc ^ 0xffffffff) >>> 0;
+	return {
+		summary,
+		resolvedImageNodes,
+		missingImageNodes,
+		generatedShapeNodes,
+	};
 }

@@ -15,6 +15,7 @@ import {
 	normalizeRepeatableUiScaffoldArgs,
 } from "../utils/RepeatableUiScaffold";
 import {
+	analyzeNormalizedDesignLayout,
 	normalizeDesignImportArgs,
 	normalizeDesignLayoutDocument,
 } from "../utils/DesignJson";
@@ -464,6 +465,10 @@ export class ToolDispatcher {
 
 			case "import_design_layout":
 				ToolDispatcher.importDesignLayout(args, callback);
+				break;
+
+			case "analyze_design_layout":
+				ToolDispatcher.analyzeDesignLayout(args, callback);
 				break;
 
 			case "execute_menu_item":
@@ -1041,6 +1046,17 @@ export class ToolDispatcher {
 			return callback(`读取设计 JSON 失败: ${e.message}`);
 		}
 
+		const analysis = analyzeNormalizedDesignLayout(normalizedLayout);
+		if (analysis.missingImageNodes.length > 0) {
+			const preview = analysis.missingImageNodes
+				.slice(0, 8)
+				.map((node) => `${node.name}(${node.id})`)
+				.join(", ");
+			return callback(
+				`设计导入仅允许使用素材目录中的正式资源，仍有 ${analysis.missingImageNodes.length} 个图片节点未绑定正式素材: ${preview}`,
+			);
+		}
+
 		const targets = [spec.prefabPath, ...normalizedLayout.assetTasks.map((task) => task.path)];
 		if (!spec.overwrite) {
 			const existing = targets.filter((targetPath) => Editor.assetdb.exists(targetPath));
@@ -1102,6 +1118,7 @@ export class ToolDispatcher {
 											rootNodeName: normalizedLayout.root.name,
 											nodeCount: importResult.nodeCount,
 											assetCount: normalizedLayout.assetTasks.length,
+											analysis,
 											created,
 										});
 									},
@@ -1135,6 +1152,56 @@ export class ToolDispatcher {
 		};
 
 		writeAssetTask(0);
+	}
+
+  static analyzeDesignLayout(args, callback) {
+		let spec;
+		try {
+			spec = normalizeDesignImportArgs(args);
+		} catch (e) {
+			return callback(`分析参数无效: ${e.message}`);
+		}
+
+		try {
+			const jsonFsPath = ToolDispatcher._resolveJsonInputPath(spec.jsonPath);
+			if (!fs.existsSync(jsonFsPath)) {
+				return callback(`找不到设计 JSON: ${jsonFsPath}`);
+			}
+
+			const imageAssetPaths = [];
+			spec.imageAssetDirs.forEach((dirPath) => {
+				ToolDispatcher._collectImageAssetPathsFromDir(dirPath, new Set()).forEach((assetPath) => {
+					imageAssetPaths.push(assetPath);
+				});
+			});
+
+			const rawDocument = JSON.parse(fs.readFileSync(jsonFsPath, "utf8"));
+			const normalizedLayout = normalizeDesignLayoutDocument(rawDocument, {
+				assetOutputDir: spec.assetOutputDir,
+				imageAssetPaths,
+				imageAssetMap: spec.imageAssetMap,
+				importGeneratedShapes: spec.importGeneratedShapes,
+			});
+			const analysis = analyzeNormalizedDesignLayout(normalizedLayout);
+
+			callback(null, {
+				ok: true,
+				jsonPath: jsonFsPath,
+				options: {
+					imageAssetDirs: spec.imageAssetDirs,
+					imageAssetMapKeys: Object.keys(spec.imageAssetMap || {}),
+					importGeneratedShapes: spec.importGeneratedShapes,
+					strictImageAssets: spec.strictImageAssets,
+				},
+				root: {
+					name: normalizedLayout.root.name,
+					size: normalizedLayout.root.size,
+				},
+				analysis,
+			});
+		} catch (e) {
+			callback(`分析设计 JSON 失败: ${e.message}`);
+		}
 	}
 
   static manageScript(args, callback) {

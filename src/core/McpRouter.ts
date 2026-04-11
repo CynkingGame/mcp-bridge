@@ -40,6 +40,13 @@ export class McpRouter {
 			return res.end(JSON.stringify({ resources: resources }));
 		}
 
+		if (url === "/list-prompts") {
+			const prompts = McpWrappers.getPromptsList();
+			Logger.info(`AI Client requested prompt list`);
+			res.writeHead(200);
+			return res.end(JSON.stringify({ prompts }));
+		}
+
 		if (url === "/read-resource") {
 			try {
 				const { uri } = JSON.parse(body || "{}");
@@ -65,6 +72,27 @@ export class McpRouter {
 							],
 						}),
 					);
+				});
+			} catch (e: any) {
+				res.writeHead(500);
+				res.end(JSON.stringify({ error: e.message }));
+			}
+			return;
+		}
+
+		if (url === "/get-prompt") {
+			try {
+				const { name, arguments: args } = JSON.parse(body || "{}");
+				Logger.mcp(`PROMPT -> [${name}]`);
+				McpWrappers.handleGetPrompt(name, args, (err: any, prompt: any) => {
+					if (err) {
+						Logger.error(`读取 prompt 失败: ${err}`);
+						res.writeHead(500);
+						return res.end(JSON.stringify({ error: err }));
+					}
+					Logger.success(`读取 prompt 成功: ${name}`);
+					res.writeHead(200);
+					res.end(JSON.stringify(prompt));
 				});
 			} catch (e: any) {
 				res.writeHead(500);
@@ -220,6 +248,18 @@ export class McpRouter {
 								},
 							],
 						});
+					});
+				}),
+			listPrompts: async () => McpWrappers.getPromptsList(),
+			getPrompt: (name, args) =>
+				new Promise((resolve, reject) => {
+					Logger.mcp(`[HTTP MCP] PROMPT -> [${name}]`);
+					McpWrappers.handleGetPrompt(name, args, (err: any, prompt: any) => {
+						if (err) {
+							Logger.error(`[HTTP MCP] prompt 读取失败: ${err}`);
+							return reject(new Error(String(err)));
+						}
+						resolve(prompt);
 					});
 				}),
 		})

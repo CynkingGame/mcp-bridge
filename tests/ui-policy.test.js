@@ -150,7 +150,9 @@ test("workflow guide mentions the recommended UI prefab toolchain", () => {
     assert.match(guide, /validate_ui_prefab/);
     assert.match(guide, /screen-root/);
     assert.match(guide, /import_design_layout/);
+    assert.match(guide, /analyze_design_layout/);
     assert.match(guide, /imageAssetDir/);
+    assert.match(guide, /strictImageAssets/);
     assert.match(guide, /base64/);
 });
 
@@ -160,6 +162,14 @@ test("resource list exposes ui policy and workflow resources", () => {
 
     assert.ok(uris.includes("cocos://ui/policy"));
     assert.ok(uris.includes("cocos://ui/workflow"));
+});
+
+test("prompt list exposes workflow guardrails and design planner prompts", () => {
+    const prompts = McpWrappers.getPromptsList();
+    const names = prompts.map((prompt) => prompt.name);
+
+    assert.ok(names.includes("ui-workflow-guardrails"));
+    assert.ok(names.includes("design-import-planner"));
 });
 
 test("project workflow file overrides the package default workflow", () => {
