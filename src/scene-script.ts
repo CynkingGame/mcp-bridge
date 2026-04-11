@@ -360,6 +360,402 @@ const snapshotNodeForValidation = (node) => {
     };
 };
 
+const generatePrefabFileId = () => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let result = "";
+    for (let i = 0; i < 22; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+};
+
+const serializeNodeToPrefabJson = (node, options) => {
+    const scene = cc.director.getScene();
+    const resolvedPrefabRootPolicy = resolvePrefabRootPolicy(options && options.uiPolicy, {
+        rootPreset: options && options.rootPreset,
+        nodeSize: {
+            width: node.width,
+            height: node.height,
+        },
+        canvasDesignResolution: getCanvasDesignResolution(scene, options && options.uiPolicy),
+    });
+    const nodeUiSnapshot = resolvedPrefabRootPolicy.shouldApply ? captureUiState(node) : null;
+
+    try {
+        if (resolvedPrefabRootPolicy.shouldApply) {
+            applyResolvedUiPolicyToNode(node, resolvedPrefabRootPolicy);
+        }
+
+        const serializedStr = Editor.serialize(node);
+        const sceneData = JSON.parse(serializedStr);
+
+        if (!Array.isArray(sceneData) || sceneData.length === 0) {
+            throw new Error("序列化数据格式异常");
+        }
+
+        let sceneIndex = -1;
+        for (let i = 0; i < sceneData.length; i++) {
+            if (sceneData[i].__type__ === "cc.Scene") {
+                sceneIndex = i;
+                break;
+            }
+        }
+
+        let filteredData: any[] = [];
+        let oldToNewIndex: any = {};
+        let newIndex = 1;
+
+        for (let i = 0; i < sceneData.length; i++) {
+            if (i === sceneIndex) {
+                oldToNewIndex[i] = -1;
+                continue;
+            }
+            oldToNewIndex[i] = newIndex;
+            filteredData.push(sceneData[i]);
+            newIndex++;
+        }
+
+        let rootNodeOldIndex = -1;
+        for (let i = 0; i < sceneData.length; i++) {
+            if (i === sceneIndex) continue;
+            if (sceneData[i].__type__ === "cc.Node") {
+                if (sceneData[i]._parent && sceneData[i]._parent.__id__ === sceneIndex) {
+                    rootNodeOldIndex = i;
+                    break;
+                }
+            }
+        }
+        if (rootNodeOldIndex === -1) {
+            for (let i = 0; i < sceneData.length; i++) {
+                if (i === sceneIndex) continue;
+                if (sceneData[i].__type__ === "cc.Node") {
+                    rootNodeOldIndex = i;
+                    break;
+                }
+            }
+        }
+
+        const rootNodeNewIndex = oldToNewIndex[rootNodeOldIndex];
+        let nodeEntries: any[] = [];
+        for (let i = 0; i < filteredData.length; i++) {
+            if (filteredData[i].__type__ === "cc.Node") {
+                nodeEntries.push({
+                    arrayIndex: i + 1,
+                    isRoot: i + 1 === rootNodeNewIndex,
+                });
+            }
+        }
+
+        let prefabData: any[] = [
+            {
+                __type__: "cc.Prefab",
+                _name: "",
+                _objFlags: 0,
+                _native: "",
+                data: { __id__: rootNodeNewIndex },
+                optimizationPolicy: 0,
+                asyncLoadAssets: false,
+                readonly: false,
+            },
+        ];
+
+        for (let i = 0; i < filteredData.length; i++) {
+            prefabData.push(filteredData[i]);
+        }
+
+        const updateRefs = (obj) => {
+            if (obj === null || obj === undefined || typeof obj !== "object") return;
+            if (Array.isArray(obj)) {
+                obj.forEach((item) => updateRefs(item));
+                return;
+            }
+            for (let key in obj) {
+                if (!obj.hasOwnProperty(key)) continue;
+                if (key === "__id__" && typeof obj[key] === "number") {
+                    const oldIdx = obj[key];
+                    if (oldToNewIndex.hasOwnProperty(oldIdx)) {
+                        obj[key] = oldToNewIndex[oldIdx];
+                    }
+                } else if (typeof obj[key] === "object" && obj[key] !== null) {
+                    updateRefs(obj[key]);
+                }
+            }
+        };
+
+        for (let i = 1; i < prefabData.length; i++) {
+            updateRefs(prefabData[i]);
+        }
+
+        let rootNodeObj = prefabData[rootNodeNewIndex];
+        if (rootNodeObj) {
+            rootNodeObj._parent = null;
+        }
+
+        for (let i = 1; i < prefabData.length; i++) {
+            if (prefabData[i]._id !== undefined) {
+                prefabData[i]._id = "";
+            }
+        }
+
+        let prefabInfoStartIndex = prefabData.length;
+        for (let ni = 0; ni < nodeEntries.length; ni++) {
+            let entry = nodeEntries[ni];
+            let prefabInfoIndex = prefabInfoStartIndex + ni;
+
+            let nodeObj = prefabData[entry.arrayIndex];
+            if (nodeObj) {
+                nodeObj._prefab = { __id__: prefabInfoIndex };
+            }
+
+            prefabData.push({
+                __type__: "cc.PrefabInfo",
+                root: { __id__: rootNodeNewIndex },
+                asset: { __id__: 0 },
+                fileId: entry.isRoot ? "" : generatePrefabFileId(),
+                sync: false,
+            });
+        }
+
+        return JSON.stringify(prefabData, null, 2);
+    } finally {
+        if (nodeUiSnapshot) {
+            restoreUiState(node, nodeUiSnapshot);
+        }
+    }
+};
+
+const configureRepeatableLayout = (layout, direction) => {
+    layout.resizeMode = cc.Layout.ResizeMode.CONTAINER;
+    layout.paddingLeft = 16;
+    layout.paddingRight = 16;
+    layout.paddingTop = 16;
+    layout.paddingBottom = 16;
+    layout.spacingX = 12;
+    layout.spacingY = 12;
+
+    if (direction === "horizontal") {
+        layout.type = cc.Layout.Type.HORIZONTAL;
+        return;
+    }
+    if (direction === "grid") {
+        layout.type = cc.Layout.Type.GRID;
+        layout.startAxis = cc.Layout.AxisDirection.HORIZONTAL;
+        layout.cellSize = cc.size(120, 120);
+        return;
+    }
+    layout.type = cc.Layout.Type.VERTICAL;
+};
+
+const createRepeatableFieldNode = (field) => {
+    const fieldNode = new cc.Node(field.nodeName || field.name);
+    fieldNode.anchorX = 0.5;
+    fieldNode.anchorY = 0.5;
+
+    if (field.type === "sprite") {
+        const sprite = fieldNode.addComponent(cc.Sprite);
+        sprite.sizeMode = cc.Sprite.SizeMode.RAW;
+        fieldNode.width = field.width || 72;
+        fieldNode.height = field.height || 72;
+        return fieldNode;
+    }
+
+    const label = fieldNode.addComponent(cc.Label);
+    label.string = field.placeholder || field.name;
+    fieldNode.width = field.width || 160;
+    fieldNode.height = field.height || 40;
+    return fieldNode;
+};
+
+const createRepeatableItemNode = (spec) => {
+    const itemNode = new cc.Node(spec.itemName);
+    itemNode.anchorX = 0.5;
+    itemNode.anchorY = 0.5;
+    itemNode.width = spec.itemWidth || 600;
+    itemNode.height = spec.itemHeight || 96;
+
+    const layout = itemNode.addComponent(cc.Layout);
+    layout.type = cc.Layout.Type.HORIZONTAL;
+    layout.resizeMode = cc.Layout.ResizeMode.CONTAINER;
+    layout.paddingLeft = 16;
+    layout.paddingRight = 16;
+    layout.paddingTop = 12;
+    layout.paddingBottom = 12;
+    layout.spacingX = 12;
+
+    (spec.fields || []).forEach((field) => {
+        itemNode.addChild(createRepeatableFieldNode(field));
+    });
+    layout.updateLayout();
+    return itemNode;
+};
+
+const createRepeatableContainerNode = (spec) => {
+    const containerNode = new cc.Node(spec.containerName);
+    containerNode.anchorX = 0.5;
+    containerNode.anchorY = 0.5;
+    containerNode.width = spec.containerWidth || 720;
+    containerNode.height = spec.containerHeight || 960;
+
+    let contentParent = containerNode;
+    if (spec.useScrollView) {
+        const mask = containerNode.addComponent(cc.Mask);
+        mask.type = cc.Mask.Type.RECT;
+        const scrollView = containerNode.addComponent(cc.ScrollView);
+        scrollView.horizontal = spec.listDirection !== "vertical";
+        scrollView.vertical = spec.listDirection !== "horizontal";
+        scrollView.inertia = true;
+        scrollView.elastic = true;
+
+        const content = new cc.Node("Content");
+        content.anchorX = 0.5;
+        content.anchorY = 1;
+        content.width = containerNode.width;
+        content.height = containerNode.height;
+        containerNode.addChild(content);
+        scrollView.content = content;
+        contentParent = content;
+    } else {
+        const content = new cc.Node("Content");
+        content.anchorX = 0.5;
+        content.anchorY = 1;
+        content.width = containerNode.width;
+        content.height = containerNode.height;
+        containerNode.addChild(content);
+        contentParent = content;
+    }
+
+    const layout = contentParent.addComponent(cc.Layout);
+    configureRepeatableLayout(layout, spec.listDirection);
+    layout.updateLayout();
+    return containerNode;
+};
+
+const applyDesignTextStyle = (node, textSpec) => {
+    if (!textSpec) {
+        return;
+    }
+    const label = node.getComponent(cc.Label) || node.addComponent(cc.Label);
+    label.string = textSpec.content || "";
+    label.fontSize = textSpec.fontSize || 24;
+    label.lineHeight = textSpec.lineHeight || label.fontSize;
+    label.useSystemFont = true;
+    label.fontFamily = textSpec.fontFamily || "Arial";
+    label.enableWrapText = true;
+    label.overflow = cc.Label.Overflow.CLAMP;
+    label.horizontalAlign =
+        textSpec.horizontalAlign === "RIGHT"
+            ? cc.Label.HorizontalAlign.RIGHT
+            : textSpec.horizontalAlign === "CENTER"
+              ? cc.Label.HorizontalAlign.CENTER
+              : cc.Label.HorizontalAlign.LEFT;
+    label.verticalAlign = cc.Label.VerticalAlign.CENTER;
+
+    if (textSpec.color) {
+        node.color = new cc.Color(
+            textSpec.color.r,
+            textSpec.color.g,
+            textSpec.color.b,
+            textSpec.color.a,
+        );
+    }
+
+    if (textSpec.outline) {
+        const outline = node.getComponent(cc.LabelOutline) || node.addComponent(cc.LabelOutline);
+        outline.width = textSpec.outline.width || 1;
+        outline.color = new cc.Color(
+            textSpec.outline.color.r,
+            textSpec.outline.color.g,
+            textSpec.outline.color.b,
+            textSpec.outline.color.a,
+        );
+    }
+
+    if (textSpec.shadow) {
+        const shadow = node.getComponent(cc.LabelShadow) || node.addComponent(cc.LabelShadow);
+        shadow.offset = cc.v2(textSpec.shadow.offsetX || 0, -(textSpec.shadow.offsetY || 0));
+        shadow.blur = textSpec.shadow.blur || 0;
+        shadow.color = new cc.Color(
+            textSpec.shadow.color.r,
+            textSpec.shadow.color.g,
+            textSpec.shadow.color.b,
+            textSpec.shadow.color.a,
+        );
+    }
+};
+
+const enqueueDesignSpriteLoad = (node, visual, pendingLoads) => {
+    if (!visual || !visual.spriteFrameUuid) {
+        return;
+    }
+
+    const sprite = node.getComponent(cc.Sprite) || node.addComponent(cc.Sprite);
+    sprite.sizeMode =
+        visual.preferredSizeMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
+    sprite.type = visual.useSliced ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
+
+    pendingLoads.push((done) => {
+        cc.assetManager.loadAny(visual.spriteFrameUuid, (err, asset) => {
+            if (!err && asset) {
+                sprite.spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+            }
+            done();
+        });
+    });
+};
+
+const createImportedDesignNode = (spec, pendingLoads) => {
+    const node = new cc.Node(spec.name || "DesignNode");
+    node.anchorX = 0.5;
+    node.anchorY = 0.5;
+    node.x = spec.position ? spec.position.x || 0 : 0;
+    node.y = spec.position ? spec.position.y || 0 : 0;
+    node.width = spec.size ? spec.size.width || 0 : 0;
+    node.height = spec.size ? spec.size.height || 0 : 0;
+    node.opacity = spec.opacity === undefined ? 255 : spec.opacity;
+    node.rotation = spec.rotation || 0;
+    node.active = spec.visible !== false;
+
+    if (spec.text) {
+        applyDesignTextStyle(node, spec.text);
+    }
+
+    enqueueDesignSpriteLoad(node, spec.visual, pendingLoads);
+
+    if (spec.isButton && !node.getComponent(cc.Button)) {
+        node.addComponent(cc.Button);
+    }
+
+    (spec.children || []).forEach((childSpec) => {
+        node.addChild(createImportedDesignNode(childSpec, pendingLoads));
+    });
+
+    return node;
+};
+
+const countImportedDesignNodes = (spec) => {
+    if (!spec) {
+        return 0;
+    }
+    return 1 + (spec.children || []).reduce((sum, child) => sum + countImportedDesignNodes(child), 0);
+};
+
+const runPendingDesignLoads = (pendingLoads, done) => {
+    if (!pendingLoads || pendingLoads.length === 0) {
+        done();
+        return;
+    }
+    let index = 0;
+    const next = () => {
+        if (index >= pendingLoads.length) {
+            done();
+            return;
+        }
+        const task = pendingLoads[index++];
+        task(() => next());
+    };
+    next();
+};
+
 export = {
     /**
      * 修改节点的基础属性
@@ -1894,201 +2290,95 @@ export = {
             return;
         }
 
-        const scene = cc.director.getScene();
-        const resolvedPrefabRootPolicy = resolvePrefabRootPolicy(args.uiPolicy, {
-            rootPreset: args.rootPreset,
-            nodeSize: {
-                width: node.width,
-                height: node.height,
-            },
-            canvasDesignResolution: getCanvasDesignResolution(scene, args.uiPolicy),
-        });
-        const nodeUiSnapshot = resolvedPrefabRootPolicy.shouldApply ? captureUiState(node) : null;
-
         try {
-            if (resolvedPrefabRootPolicy.shouldApply) {
-                applyResolvedUiPolicyToNode(node, resolvedPrefabRootPolicy);
-            }
-
-            // 第一步：使用 Editor.serialize 获取原始序列化数据（场景格式）
-            const serializedStr = Editor.serialize(node);
-            const sceneData = JSON.parse(serializedStr);
-
-            if (!Array.isArray(sceneData) || sceneData.length === 0) {
-                if (event.reply) event.reply(new Error("序列化数据格式异常"));
-                return;
-            }
-
-            // 第二步：识别并移除 cc.Scene 对象，找到真正的根节点
-            // Editor.serialize 输出格式：[根节点(cc.Node), cc.Scene, 子节点..., 组件...]
-            // 根节点的 _parent 指向 cc.Scene
-            let sceneIndex = -1;
-            for (let i = 0; i < sceneData.length; i++) {
-                if (sceneData[i].__type__ === "cc.Scene") {
-                    sceneIndex = i;
-                    break;
-                }
-            }
-
-            // 移除 cc.Scene 并构建旧索引到新索引的映射
-            let filteredData = [];
-            let oldToNewIndex = {};
-            let newIndex = 0;
-
-            // 先留出索引 0 给 cc.Prefab
-            newIndex = 1;
-
-            for (let i = 0; i < sceneData.length; i++) {
-                if (i === sceneIndex) {
-                    // 跳过 cc.Scene
-                    oldToNewIndex[i] = -1;
-                    continue;
-                }
-                oldToNewIndex[i] = newIndex;
-                filteredData.push(sceneData[i]);
-                newIndex++;
-            }
-
-            // 第三步：为每个 cc.Node 生成 cc.PrefabInfo
-            // 需要知道根节点在新数组中的索引
-            let rootNodeOldIndex = -1;
-            for (let i = 0; i < sceneData.length; i++) {
-                if (i === sceneIndex) continue;
-                if (sceneData[i].__type__ === "cc.Node") {
-                    // 根节点是 _parent 指向 cc.Scene 的那个，或者是第一个 cc.Node
-                    if (sceneData[i]._parent && sceneData[i]._parent.__id__ === sceneIndex) {
-                        rootNodeOldIndex = i;
-                        break;
-                    }
-                }
-            }
-            // 如果没有找到指向 Scene 的根节点，使用第一个 cc.Node
-            if (rootNodeOldIndex === -1) {
-                for (let i = 0; i < sceneData.length; i++) {
-                    if (i === sceneIndex) continue;
-                    if (sceneData[i].__type__ === "cc.Node") {
-                        rootNodeOldIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            const rootNodeNewIndex = oldToNewIndex[rootNodeOldIndex]; // 根节点在新数组中的索引
-
-            // 收集所有 cc.Node 的新索引，用于给每个节点附加 PrefabInfo
-            let nodeEntries = []; // { newIndex, isRoot }
-            for (let i = 0; i < filteredData.length; i++) {
-                if (filteredData[i].__type__ === "cc.Node") {
-                    nodeEntries.push({
-                        arrayIndex: i + 1, // +1 因为 cc.Prefab 在索引 0
-                        isRoot: i + 1 === rootNodeNewIndex,
-                    });
-                }
-            }
-
-            // 生成 fileId 的简单方法（与 main.js 中的 generateFileId 逻辑一致）
-            function generateFileId() {
-                const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                let result = "";
-                for (let i = 0; i < 22; i++) {
-                    result += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-                return result;
-            }
-
-            // 第四步：构建最终的预制体数据数组
-            // 结构: [cc.Prefab, 根节点(cc.Node), 子节点..., 组件..., cc.PrefabInfo...]
-            let prefabData = [];
-
-            // 索引 0: cc.Prefab 包装器
-            prefabData.push({
-                __type__: "cc.Prefab",
-                _name: "",
-                _objFlags: 0,
-                _native: "",
-                data: { __id__: rootNodeNewIndex },
-                optimizationPolicy: 0,
-                asyncLoadAssets: false,
-                readonly: false,
-            });
-
-            // 添加过滤后的数据（所有原始对象，除了 cc.Scene）
-            for (let i = 0; i < filteredData.length; i++) {
-                prefabData.push(filteredData[i]);
-            }
-
-            // 第五步：更新所有 __id__ 引用（使用旧到新的索引映射）
-            function updateRefs(obj) {
-                if (obj === null || obj === undefined || typeof obj !== "object") return;
-                if (Array.isArray(obj)) {
-                    obj.forEach(function (item) {
-                        updateRefs(item);
-                    });
-                    return;
-                }
-                for (let key in obj) {
-                    if (!obj.hasOwnProperty(key)) continue;
-                    if (key === "__id__" && typeof obj[key] === "number") {
-                        let oldIdx = obj[key];
-                        if (oldToNewIndex.hasOwnProperty(oldIdx)) {
-                            obj[key] = oldToNewIndex[oldIdx];
-                        }
-                    } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                        updateRefs(obj[key]);
-                    }
-                }
-            }
-
-            // 更新 prefabData 中所有对象的 __id__ 引用（跳过索引 0 的 cc.Prefab，它的引用已经是新索引）
-            for (let i = 1; i < prefabData.length; i++) {
-                updateRefs(prefabData[i]);
-            }
-
-            // 第六步：修复根节点的 _parent 为 null
-            let rootNodeObj = prefabData[rootNodeNewIndex];
-            if (rootNodeObj) {
-                rootNodeObj._parent = null;
-            }
-
-            // 第七步：清空所有 _id 字段（预制体中节点的 _id 应为空，运行时由引擎分配）
-            for (let i = 1; i < prefabData.length; i++) {
-                if (prefabData[i]._id !== undefined) {
-                    prefabData[i]._id = "";
-                }
-            }
-
-            // 第八步：为每个 cc.Node 添加 cc.PrefabInfo
-            // PrefabInfo 追加在数组末尾
-            let prefabInfoStartIndex = prefabData.length;
-            for (let ni = 0; ni < nodeEntries.length; ni++) {
-                let entry = nodeEntries[ni];
-                let prefabInfoIndex = prefabInfoStartIndex + ni;
-
-                // 在节点上设置 _prefab 引用
-                let nodeObj = prefabData[entry.arrayIndex];
-                if (nodeObj) {
-                    nodeObj._prefab = { __id__: prefabInfoIndex };
-                }
-
-                // 创建 PrefabInfo 对象
-                prefabData.push({
-                    __type__: "cc.PrefabInfo",
-                    root: { __id__: rootNodeNewIndex },
-                    asset: { __id__: 0 },
-                    fileId: entry.isRoot ? "" : generateFileId(),
-                    sync: false,
-                });
-            }
-
-            // 第九步：序列化为 JSON 字符串
-            const result = JSON.stringify(prefabData, null, 2);
+            const result = serializeNodeToPrefabJson(node, args);
             if (event.reply) event.reply(null, result);
         } catch (e) {
             if (event.reply) event.reply(new Error(`序列化节点失败: ${e.message}`));
-        } finally {
-            if (nodeUiSnapshot) {
-                restoreUiState(node, nodeUiSnapshot);
+        }
+    },
+
+    "scaffold-repeatable-ui": function (event, args) {
+        const scene = cc.director.getScene();
+        if (!scene) {
+            if (event.reply) event.reply(new Error("场景尚未准备好，无法创建重复块脚手架"));
+            return;
+        }
+
+        const tempRoot = new cc.Node("__MCP_REPEATABLE_UI_TEMP__");
+        tempRoot.parent = scene;
+
+        try {
+            const itemNode = createRepeatableItemNode(args.spec);
+            const containerNode = createRepeatableContainerNode(args.spec);
+            tempRoot.addChild(itemNode);
+            tempRoot.addChild(containerNode);
+
+            const itemPrefabContent = serializeNodeToPrefabJson(itemNode, {
+                uiPolicy: args.uiPolicy,
+            });
+            const containerPrefabContent = serializeNodeToPrefabJson(containerNode, {
+                uiPolicy: args.uiPolicy,
+                rootPreset: args.spec.rootPreset,
+            });
+
+            if (event.reply) {
+                event.reply(null, {
+                    itemPrefabContent,
+                    containerPrefabContent,
+                    itemFieldBindings: (args.spec.fields || []).map((field) => ({
+                        name: field.name,
+                        nodeName: field.nodeName,
+                        type: field.type,
+                    })),
+                    contentNodeName: "Content",
+                });
             }
+        } catch (e) {
+            if (event.reply) event.reply(new Error(`创建重复块脚手架失败: ${e.message}`));
+        } finally {
+            tempRoot.destroy();
+        }
+    },
+
+    "import-design-layout": function (event, args) {
+        const scene = cc.director.getScene();
+        if (!scene) {
+            if (event.reply) event.reply(new Error("场景尚未准备好，无法导入设计布局"));
+            return;
+        }
+
+        const tempRoot = new cc.Node("__MCP_DESIGN_IMPORT_TEMP__");
+        tempRoot.parent = scene;
+
+        try {
+            const pendingLoads = [];
+            const rootNode = createImportedDesignNode(args.layout, pendingLoads);
+            tempRoot.addChild(rootNode);
+
+            runPendingDesignLoads(pendingLoads, () => {
+                try {
+                    const prefabContent = serializeNodeToPrefabJson(rootNode, {
+                        uiPolicy: args.uiPolicy,
+                        rootPreset: args.spec && args.spec.rootPreset,
+                    });
+                    if (event.reply) {
+                        event.reply(null, {
+                            prefabContent,
+                            nodeCount: countImportedDesignNodes(args.layout),
+                        });
+                    }
+                } catch (e) {
+                    if (event.reply) {
+                        event.reply(new Error(`导入设计布局失败: ${e.message}`));
+                    }
+                } finally {
+                    tempRoot.destroy();
+                }
+            });
+        } catch (e) {
+            tempRoot.destroy();
+            if (event.reply) event.reply(new Error(`导入设计布局失败: ${e.message}`));
         }
     },
 

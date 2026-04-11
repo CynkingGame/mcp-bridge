@@ -73,6 +73,20 @@
 - **扫描当前使用资源**: 可显式扫描当前场景/预制体里已经挂上的 `Sprite` / `Button` 纹理。
 - **补齐缺失九宫格**: 对命中规则但尚未设置的点9纹理自动写入 Meta。
 
+## 重复块脚手架工具 (2026-04-11)
+
+### 1. 新增 `scaffold_repeatable_ui`
+
+- **高阶工具**: 将“重复块抽 Item prefab + 容器 prefab + 脚本骨架”封装为单个 MCP 工具。
+- **直接落资产**: 会生成 Item prefab、列表容器 prefab、Item 脚本、Controller 脚本四类资源。
+- **自动挂载脚本**: 脚本刷新后会自动尝试挂到对应 prefab 根节点，并为 Controller 绑定 `itemPrefab`。
+- **适用场景**: 排行项、奖励格子、商店项、活动列表项等重复结构。
+
+### 2. 项目级 workflow 协同
+
+- **项目根目录优先**: `cocos://ui/workflow` 现优先读取项目根目录的 workflow 文档。
+- **配套规范**: 可在项目里明确要求重复 3 次以上的同结构 UI 优先抽成 `Item prefab`。
+
 ## 纹理与节点变换增强 (Texture & Transform Updates) (2026-02-10)
 
 ### 1. `manage_texture` 工具增强

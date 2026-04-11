@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { UiPolicyConfig, getDefaultUiPolicy, mergeUiPolicy, normalizeUiPolicy } from "./UiPolicy";
+import { buildUiPolicyWorkflowGuide } from "./UiPolicyPrompt";
 
 function tryReadJson(filePath: string): Record<string, any> | null {
 	if (!fs.existsSync(filePath)) {
@@ -8,6 +9,17 @@ function tryReadJson(filePath: string): Record<string, any> | null {
 	}
 	try {
 		return JSON.parse(fs.readFileSync(filePath, "utf8"));
+	} catch (_error) {
+		return null;
+	}
+}
+
+function tryReadText(filePath: string): string | null {
+	if (!fs.existsSync(filePath)) {
+		return null;
+	}
+	try {
+		return fs.readFileSync(filePath, "utf8");
 	} catch (_error) {
 		return null;
 	}
@@ -29,11 +41,36 @@ export function loadProjectUiPolicy(projectRoot: string, packageRoot?: string): 
 	return normalizeUiPolicy(policy);
 }
 
+export function loadProjectUiWorkflow(projectRoot: string, packageRoot?: string): string {
+	const resolvedPackageRoot = packageRoot || path.join(projectRoot, "packages", "mcp-bridge");
+	const workflowCandidates = [
+		path.join(projectRoot, "settings", "mcp-ui-workflow.md"),
+		path.join(projectRoot, "docs", "ai-ui-workflow.md"),
+		path.join(resolvedPackageRoot, "project-ui-workflow.md"),
+	];
+
+	for (const filePath of workflowCandidates) {
+		const content = tryReadText(filePath);
+		if (content && content.trim()) {
+			return content;
+		}
+	}
+
+	return buildUiPolicyWorkflowGuide(loadProjectUiPolicy(projectRoot, resolvedPackageRoot));
+}
+
 export function loadProjectUiPolicyForCurrentEditor(): UiPolicyConfig {
 	if (typeof Editor !== "undefined" && Editor.Project && Editor.Project.path) {
 		return loadProjectUiPolicy(Editor.Project.path);
 	}
 	return getDefaultUiPolicy();
+}
+
+export function loadProjectUiWorkflowForCurrentEditor(): string {
+	if (typeof Editor !== "undefined" && Editor.Project && Editor.Project.path) {
+		return loadProjectUiWorkflow(Editor.Project.path);
+	}
+	return buildUiPolicyWorkflowGuide(getDefaultUiPolicy());
 }
 
 export function getUiPolicySummary(policyInput?: Partial<UiPolicyConfig> | null): string {

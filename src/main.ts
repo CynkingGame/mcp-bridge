@@ -281,7 +281,7 @@ export = {
 		"mcp-scan-clients"(event) {
 			try {
 				const { scanMcpClients } = require('./McpConfigurator');
-				if (event.reply) event.reply(null, scanMcpClients());
+				if (event.reply) event.reply(null, scanMcpClients(HttpServer.config.port || 3456));
 			} catch (e) {
 				if (event.reply) event.reply(new Error(e.message));
 			}
@@ -290,7 +290,7 @@ export = {
 		"mcp-inject-client"(event, clientId) {
 			try {
 				const { injectMcpConfig } = require('./McpConfigurator');
-				const log = injectMcpConfig(clientId === -1 ? undefined : clientId);
+				const log = injectMcpConfig(clientId === -1 ? undefined : clientId, HttpServer.config.port || 3456);
 				if (event.reply) event.reply(null, log);
 			} catch (e) {
 				if (event.reply) event.reply(new Error("写入报错: " + e.message));
@@ -300,7 +300,7 @@ export = {
 		"mcp-get-payload"(event) {
 			try {
 				const { getPayload } = require('./McpConfigurator');
-				if (event.reply) event.reply(null, getPayload());
+				if (event.reply) event.reply(null, getPayload(undefined, HttpServer.config.port || 3456));
 			} catch (e) {
 				if (event.reply) event.reply(new Error(e.message));
 			}

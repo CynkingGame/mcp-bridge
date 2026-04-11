@@ -48,6 +48,14 @@ export interface UiPolicyConfig {
 			tolerance: number;
 		};
 	};
+	repeatableUi?: {
+		enabled: boolean;
+		reuseThreshold: number;
+		preferPrefab: boolean;
+		preferDataDriven: boolean;
+		itemPrefabSuffix: string;
+		recommendedScriptApis: string[];
+	};
 	autoNineSlice?: Partial<AutoNineSlicePolicy>;
 	presets: Record<string, UiPresetConfig>;
 }
@@ -109,6 +117,14 @@ const DEFAULT_UI_POLICY: UiPolicyConfig = {
 			preset: "screen-root",
 			tolerance: 2,
 		},
+	},
+	repeatableUi: {
+		enabled: true,
+		reuseThreshold: 3,
+		preferPrefab: true,
+		preferDataDriven: true,
+		itemPrefabSuffix: "Item",
+		recommendedScriptApis: ["setData(data)", "render(list)"],
 	},
 	autoNineSlice: {
 		enabled: false,

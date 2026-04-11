@@ -121,6 +121,100 @@ export const getToolsList = () => {
 			},
 		},
 		{
+			name: "scaffold_repeatable_ui",
+			description: `${globalPrecautions} 为重复块 UI 生成脚手架。会直接创建 Item prefab、容器 prefab、Item 脚本和 Controller 脚本，适用于列表项、奖励格子、排行项等“同结构重复 3 次以上”的界面。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					itemName: { type: "string", description: "重复项预制体名称，如 RankItem" },
+					containerName: { type: "string", description: "列表容器预制体名称，如 RankList" },
+					prefabDir: { type: "string", description: "预制体目录，如 db://assets/prefabs/rank" },
+					scriptDir: { type: "string", description: "脚本目录，如 db://assets/scripts/ui/rank" },
+					fields: {
+						type: "array",
+						description: "重复项字段定义。label 用于文本，sprite 用于图片占位。",
+						items: {
+							type: "object",
+							properties: {
+								name: { type: "string", description: "字段名，如 rank / icon / score" },
+								type: {
+									type: "string",
+									enum: ["label", "sprite"],
+									description: "字段类型",
+								},
+								placeholder: { type: "string", description: "可选的占位文本" },
+								width: { type: "number", description: "字段节点宽度" },
+								height: { type: "number", description: "字段节点高度" },
+							},
+							required: ["name", "type"],
+						},
+					},
+					listDirection: {
+						type: "string",
+						enum: ["vertical", "horizontal", "grid"],
+						description: "容器中的内容布局方向",
+					},
+					useScrollView: { type: "boolean", description: "是否创建带 ScrollView 的容器" },
+					rootPreset: {
+						type: "string",
+						description: `容器 prefab 根节点的项目 UI 预设。当前项目预设：${uiPolicySummary}`,
+					},
+					itemWidth: { type: "number", description: "Item 根节点宽度" },
+					itemHeight: { type: "number", description: "Item 根节点高度" },
+					containerWidth: { type: "number", description: "容器根节点宽度" },
+					containerHeight: { type: "number", description: "容器根节点高度" },
+					overwrite: { type: "boolean", description: "若资源已存在，是否覆盖" },
+				},
+				required: ["itemName", "containerName", "prefabDir", "scriptDir", "fields"],
+			},
+		},
+		{
+			name: "import_design_layout",
+			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原层级、尺寸、文本样式、内嵌图片和纯色块。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					jsonPath: {
+						type: "string",
+						description: "设计节点 JSON 路径。支持项目相对路径、绝对路径或 db:// 路径。",
+					},
+					prefabName: {
+						type: "string",
+						description: "输出 prefab 名称，如 HallPrizePanel。",
+					},
+					prefabDir: {
+						type: "string",
+						description: "输出 prefab 目录，如 db://assets/prefabs/hall。",
+					},
+					assetOutputDir: {
+						type: "string",
+						description: "导入过程中生成图片资源的目录，如 db://assets/textures/design/hall。",
+					},
+					imageAssetDir: {
+						type: "string",
+						description: "设计师单独提供的图片素材目录，如 db://assets/art/hall/prize。图片节点会优先从这里按名称匹配资源。",
+					},
+					rootPreset: {
+						type: "string",
+						description: `根节点 UI 预设。当前项目预设：${uiPolicySummary}`,
+					},
+					importEmbeddedImages: {
+						type: "boolean",
+						description: "是否允许回退导入 JSON 里携带的 base64 图片，默认 false。通常应优先使用 imageAssetDir 中的正式素材。",
+					},
+					importGeneratedShapes: {
+						type: "boolean",
+						description: "是否为纯色块/圆角块自动生成贴图资源，默认 true。",
+					},
+					overwrite: {
+						type: "boolean",
+						description: "若目标 prefab 或导入资源已存在，是否覆盖。",
+					},
+				},
+				required: ["jsonPath", "prefabName"],
+			},
+		},
+		{
 			name: "open_prefab",
 			description: `在编辑器中打开预制体文件进入编辑模式。注意：这是一个异步操作，打开后请等待几秒。`,
 			inputSchema: {

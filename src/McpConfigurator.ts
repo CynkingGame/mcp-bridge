@@ -4,6 +4,7 @@ import * as path from 'path';
 
 const bridgeCommand = 'node';
 const bridgeArgs = [path.resolve(__dirname, 'mcp-proxy.js').replace(/\\/g, '/')];
+const defaultHttpPort = 3456;
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 
@@ -37,7 +38,35 @@ const targetPaths = [
     { name: 'Zed', file: path.join(getUserProfilePath(), '.config', 'zed', 'mcp.json') }
 ];
 
-export function scanMcpClients(): any[] {
+export function buildClientMcpServerConfig(clientName?: string, port = defaultHttpPort): any {
+    if (clientName === 'Codex') {
+        return {
+            url: `http://127.0.0.1:${port}`,
+        };
+    }
+    return {
+        command: bridgeCommand,
+        args: bridgeArgs,
+    };
+}
+
+export function isConfiguredBridgeEntry(clientName: string, cfg: any, port = defaultHttpPort): boolean {
+    if (!cfg || typeof cfg !== 'object') {
+        return false;
+    }
+    if (clientName === 'Codex') {
+        return cfg.url === `http://127.0.0.1:${port}`;
+    }
+    return !!(
+        cfg.command &&
+        cfg.command.includes('node') &&
+        cfg.args &&
+        cfg.args[0] &&
+        (cfg.args[0].includes('index.js') || cfg.args[0].includes('mcp-proxy.js'))
+    );
+}
+
+export function scanMcpClients(port = defaultHttpPort): any[] {
     return targetPaths.map((t, id) => {
         if (!t.file) {
             return { id, name: t.name, path: '', isInstalled: false, isConfigured: false, isError: false };
@@ -54,7 +83,7 @@ export function scanMcpClients(): any[] {
                 const data = JSON.parse(raw);
                 if (data.mcpServers && data.mcpServers['mcp-bridge']) {
                     const cfg = data.mcpServers['mcp-bridge'];
-                    if (cfg.command && cfg.command.includes('node') && cfg.args && cfg.args[0] && (cfg.args[0].includes('index.js') || cfg.args[0].includes('mcp-proxy.js'))) {
+                    if (isConfiguredBridgeEntry(t.name, cfg, port)) {
                         isConfigured = true;
                     }
                 }
@@ -66,19 +95,16 @@ export function scanMcpClients(): any[] {
     });
 }
 
-export function getPayload(): string {
+export function getPayload(clientName?: string, port = defaultHttpPort): string {
     const payload = {
         "mcpServers": {
-            "mcp-bridge": {
-                "command": bridgeCommand,
-                "args": bridgeArgs
-            }
+            "mcp-bridge": buildClientMcpServerConfig(clientName, port)
         }
     };
     return JSON.stringify(payload, null, 2);
 }
 
-export function injectMcpConfig(clientId: number): string {
+export function injectMcpConfig(clientId: number, port = defaultHttpPort): string {
     let log = '';
     let successCount = 0;
     
@@ -109,10 +135,7 @@ export function injectMcpConfig(clientId: number): string {
             }
         }
 
-        mcpData.mcpServers['mcp-bridge'] = {
-            command: bridgeCommand,
-            args: bridgeArgs
-        };
+        mcpData.mcpServers['mcp-bridge'] = buildClientMcpServerConfig(target.name, port);
 
         try {
             fs.writeFileSync(target.file, JSON.stringify(mcpData, null, 2), 'utf-8');

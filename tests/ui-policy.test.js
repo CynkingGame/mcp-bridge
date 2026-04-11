@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
     getDefaultUiPolicy,
@@ -10,6 +13,7 @@ const {
 } = require("../dist/utils/UiPolicy.js");
 const { validateUiTree } = require("../dist/utils/UiPolicyValidation.js");
 const { buildUiPolicyWorkflowGuide } = require("../dist/utils/UiPolicyPrompt.js");
+const { loadProjectUiWorkflow } = require("../dist/utils/UiPolicyLoader.js");
 const { McpWrappers } = require("../dist/core/McpWrappers.js");
 
 test("buttons default to center anchor through the button preset", () => {
@@ -145,6 +149,9 @@ test("workflow guide mentions the recommended UI prefab toolchain", () => {
     assert.match(guide, /apply_ui_policy/);
     assert.match(guide, /validate_ui_prefab/);
     assert.match(guide, /screen-root/);
+    assert.match(guide, /import_design_layout/);
+    assert.match(guide, /imageAssetDir/);
+    assert.match(guide, /base64/);
 });
 
 test("resource list exposes ui policy and workflow resources", () => {
@@ -153,4 +160,24 @@ test("resource list exposes ui policy and workflow resources", () => {
 
     assert.ok(uris.includes("cocos://ui/policy"));
     assert.ok(uris.includes("cocos://ui/workflow"));
+});
+
+test("project workflow file overrides the package default workflow", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-ui-workflow-"));
+    const projectRoot = path.join(tempRoot, "project");
+    const packageRoot = path.join(projectRoot, "packages", "mcp-bridge");
+    const settingsDir = path.join(projectRoot, "settings");
+    const docsDir = path.join(projectRoot, "docs");
+
+    fs.mkdirSync(packageRoot, { recursive: true });
+    fs.mkdirSync(settingsDir, { recursive: true });
+    fs.mkdirSync(docsDir, { recursive: true });
+
+    fs.writeFileSync(path.join(packageRoot, "project-ui-policy.json"), JSON.stringify(getDefaultUiPolicy()), "utf8");
+    fs.writeFileSync(path.join(packageRoot, "project-ui-workflow.md"), "# package fallback", "utf8");
+    fs.writeFileSync(path.join(docsDir, "ai-ui-workflow.md"), "# project workflow", "utf8");
+
+    const workflow = loadProjectUiWorkflow(projectRoot, packageRoot);
+
+    assert.match(workflow, /project workflow/);
 });

@@ -4,13 +4,13 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { Logger } from './Logger';
 import { CommandQueue } from './CommandQueue';
-import { loadProjectUiPolicyForCurrentEditor } from '../utils/UiPolicyLoader';
-import { buildUiPolicyWorkflowGuide } from '../utils/UiPolicyPrompt';
+import { loadProjectUiPolicyForCurrentEditor, loadProjectUiWorkflowForCurrentEditor } from '../utils/UiPolicyLoader';
 declare const Editor: any;
 
 export class McpWrappers {
   static getResourceMap() {
 		const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+		const workflowGuide = loadProjectUiWorkflowForCurrentEditor();
 		return {
 			"cocos://hierarchy": {
 				uri: "cocos://hierarchy",
@@ -39,7 +39,9 @@ export class McpWrappers {
 			"cocos://ui/workflow": {
 				uri: "cocos://ui/workflow",
 				name: "UI Prefab Workflow",
-				description: "BigWinGame 的 UI prefab 工作流指南，指导 AI 优先使用 uiPreset/rootPreset/apply_ui_policy/validate_ui_prefab",
+				description: workflowGuide.includes("Item prefab")
+					? "当前项目 UI workflow（含重复块抽 Item prefab 约束）"
+					: "当前项目 UI prefab 工作流指南",
 				mimeType: "text/markdown",
 			},
 		};
@@ -89,6 +91,7 @@ export class McpWrappers {
 
 			case "ui": {
 				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				const workflowGuide = loadProjectUiWorkflowForCurrentEditor();
 				const resourceKey = parsed.pathname.replace(/^\//, "");
 
 				if (resourceKey === "policy") {
@@ -96,7 +99,7 @@ export class McpWrappers {
 				}
 
 				if (resourceKey === "workflow") {
-					return callback(null, buildUiPolicyWorkflowGuide(uiPolicy));
+					return callback(null, workflowGuide);
 				}
 
 				return callback(`Resource not found: ${uri}`);
