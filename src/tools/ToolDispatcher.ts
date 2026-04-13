@@ -31,6 +31,7 @@ import {
 	getNodeNameValidationMessage,
 	getNodeNamingPolicy,
 } from "../utils/NodeNaming";
+import { resolveProjectFontAssetUuid } from "../utils/FontAssetResolver";
 declare const Editor: any;
 
 function getNewSceneTemplate() { return `[
@@ -809,6 +810,72 @@ export class ToolDispatcher {
 		return seen;
 	}
 
+  static _collectFontAssetPaths(collected) {
+		const seen = collected || new Set();
+		const rootPath = "db://assets";
+		if (!Editor.assetdb.exists(rootPath)) {
+			return seen;
+		}
+		const rootFsPath = Editor.assetdb.urlToFspath(rootPath);
+		if (!rootFsPath || !fs.existsSync(rootFsPath)) {
+			return seen;
+		}
+
+		const walk = (currentFsPath) => {
+			const stat = fs.statSync(currentFsPath);
+			if (stat.isDirectory()) {
+				fs.readdirSync(currentFsPath).forEach((entry) => {
+					walk(pathModule.join(currentFsPath, entry));
+				});
+				return;
+			}
+
+			const ext = pathModule.extname(currentFsPath).toLowerCase();
+			if (![".ttf", ".otf"].includes(ext)) {
+				return;
+			}
+
+			let assetUrl = null;
+			if (Editor.assetdb.fspathToUrl) {
+				assetUrl = Editor.assetdb.fspathToUrl(currentFsPath);
+			}
+			if (!assetUrl && currentFsPath.startsWith(Editor.Project.path)) {
+				const relativePath = pathModule.relative(Editor.Project.path, currentFsPath).split(pathModule.sep).join("/");
+				assetUrl = `db://${relativePath}`;
+			}
+			if (assetUrl) {
+				seen.add(assetUrl);
+			}
+		};
+
+		walk(rootFsPath);
+		return seen;
+	}
+
+  static _attachDesignFontUuids(node, fontAssetUrls) {
+		if (!node) {
+			return node;
+		}
+		const text = node.text;
+		const nextText = text
+			? {
+					...text,
+					fontUuid:
+						text.fontUuid ||
+						resolveProjectFontAssetUuid(text.fontFamily, fontAssetUrls, (assetUrl) =>
+							Editor.assetdb.urlToUuid(assetUrl),
+						),
+			  }
+			: text;
+		return {
+			...node,
+			text: nextText,
+			children: (node.children || []).map((child) =>
+				ToolDispatcher._attachDesignFontUuids(child, fontAssetUrls),
+			),
+		};
+	}
+
   static _refreshAsset(assetPath, callback) {
 		Editor.assetdb.refresh(assetPath, (err) => {
 			callback(err || null, err ? null : `编辑器已刷新: ${assetPath}`);
@@ -1471,7 +1538,9 @@ export class ToolDispatcher {
 							assetUuidMap,
 						);
 						const sanitizedLayout = ToolDispatcher._sanitizeImportedLayoutNames(layoutWithUuids, uiPolicy);
-						const customSpriteNodes = ToolDispatcher._collectImportedCustomSpriteNodes(sanitizedLayout);
+						const fontAssetUrls = Array.from(ToolDispatcher._collectFontAssetPaths(new Set()));
+						const importLayout = ToolDispatcher._attachDesignFontUuids(sanitizedLayout, fontAssetUrls);
+						const customSpriteNodes = ToolDispatcher._collectImportedCustomSpriteNodes(importLayout);
 						Logger.info(
 							`[import_design_layout] 开始导入 prefab=${spec.prefabPath} json=${jsonFsPath} customSpriteCount=${customSpriteNodes.length}`,
 						);
@@ -1489,7 +1558,7 @@ export class ToolDispatcher {
 							"import-design-layout",
 							{
 								spec,
-								layout: sanitizedLayout,
+								layout: importLayout,
 								uiPolicy,
 							},
 							(err, importResult) => {
@@ -1512,12 +1581,12 @@ export class ToolDispatcher {
 											path: spec.prefabPath,
 											message: prefabMessage,
 										});
-										const scriptSource = ToolDispatcher._buildDesignLayoutScriptSourceSnapshot(sanitizedLayout);
+										const scriptSource = ToolDispatcher._buildDesignLayoutScriptSourceSnapshot(importLayout);
 										ToolDispatcher._generateAndAttachPrefabScript(
 											spec.prefabPath,
 											scriptSource,
 											{
-												rootName: sanitizedLayout.name,
+												rootName: importLayout.name,
 												dataInterfaceName: spec.logic && spec.logic.dataInterfaceName,
 												overwriteScript: false,
 											},
@@ -1527,7 +1596,7 @@ export class ToolDispatcher {
 													prefabPath: spec.prefabPath,
 													jsonPath: jsonFsPath,
 													assetOutputDir: spec.assetOutputDir,
-													rootNodeName: sanitizedLayout.name,
+													rootNodeName: importLayout.name,
 													nodeCount: importResult.nodeCount,
 													assetCount: normalizedLayout.assetTasks.length,
 													analysis,
@@ -2073,6 +2142,25 @@ export default class NewScript extends cc.Component {
 						callback(err);
 					} else {
 						callback(null, `编辑器已刷新: ${refreshPath}`);
+					}
+				});
+				break;
+			case "reload_package":
+				const packageName = properties && properties.name ? String(properties.name) : "mcp-bridge";
+				if (!Editor.Package || typeof Editor.Package.reload !== "function") {
+					return callback("当前编辑器不支持包重载");
+				}
+				const packagePath =
+					(Editor.Package.packagePath && Editor.Package.packagePath(packageName)) ||
+					(Editor.Package.find && Editor.Package.find(packageName));
+				if (!packagePath) {
+					return callback(`找不到包: ${packageName}`);
+				}
+				Editor.Package.reload(packagePath, (err) => {
+					if (err) {
+						callback(err);
+					} else {
+						callback(null, `编辑器已重载包: ${packageName}`);
 					}
 				});
 				break;

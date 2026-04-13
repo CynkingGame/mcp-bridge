@@ -269,33 +269,102 @@ function buildDataInterface(spec: PrefabScriptScaffoldSpec): string {
 	if (!spec.dataInterfaceName) {
 		return "";
 	}
+	const seenKeys = new Set<string>();
 	const lines = spec.bindings
 		.filter((binding) => binding.dataKey)
+		.filter((binding) => {
+			if (!binding.dataKey || seenKeys.has(binding.dataKey)) {
+				return false;
+			}
+			seenKeys.add(binding.dataKey);
+			return true;
+		})
 		.map((binding) => `    ${binding.dataKey}?: ${makeViewDataType(binding)};`);
 	return `export interface ${spec.dataInterfaceName} {\n${lines.join("\n")}\n}\n\n`;
 }
 
-function buildRefreshBody(spec: PrefabScriptScaffoldSpec): string {
-	const lines = groupBindings(
-		spec.bindings.filter((binding) => binding.dataKey),
-		(binding) => {
-			if (binding.componentType === "cc.Sprite") {
-				return [
-					`        if (data.${binding.dataKey} !== undefined && this.${binding.propertyName}) {`,
-					`            this.${binding.propertyName}.spriteFrame = data.${binding.dataKey};`,
-					"        }",
-				].join("\n");
-			}
-			return [
-				`        if (data.${binding.dataKey} !== undefined && this.${binding.propertyName}) {`,
-				`            this.${binding.propertyName}.string = String(data.${binding.dataKey});`,
-				"        }",
-			].join("\n");
-		},
-		"\n",
-	);
+function getBindingGroups(
+	spec: PrefabScriptScaffoldSpec,
+): Array<{ groupName: string; methodSuffix: string; bindings: PrefabScriptBindingSpec[] }> {
+	const groups: Array<{ groupName: string; methodSuffix: string; bindings: PrefabScriptBindingSpec[] }> = [];
+	const lookup = new Map<string, { groupName: string; methodSuffix: string; bindings: PrefabScriptBindingSpec[] }>();
 
-	return lines.length > 0 ? lines : "        // Bind dynamic view data here.";
+	spec.bindings.forEach((binding) => {
+		const groupName = String(binding.group || "").trim() || "content";
+		if (!lookup.has(groupName)) {
+			const groupSpec = {
+				groupName,
+				methodSuffix: toPascalCase(groupName) || "Content",
+				bindings: [],
+			};
+			lookup.set(groupName, groupSpec);
+			groups.push(groupSpec);
+		}
+		lookup.get(groupName)!.bindings.push(binding);
+	});
+
+	return groups;
+}
+
+function buildBindingAssignment(binding: PrefabScriptBindingSpec): string {
+	if (binding.componentType === "cc.Sprite") {
+		return [
+			`        if (data.${binding.dataKey} !== undefined && this.${binding.propertyName}) {`,
+			`            this.${binding.propertyName}.spriteFrame = data.${binding.dataKey};`,
+			"        }",
+		].join("\n");
+	}
+	return [
+		`        if (data.${binding.dataKey} !== undefined && this.${binding.propertyName}) {`,
+		`            this.${binding.propertyName}.string = String(data.${binding.dataKey});`,
+		"        }",
+	].join("\n");
+}
+
+function buildSetDataMethods(spec: PrefabScriptScaffoldSpec, viewDataType: string): string {
+	return getBindingGroups(spec)
+		.map((group) => {
+			const dataBindings = group.bindings.filter((binding) => binding.dataKey);
+			const body =
+				dataBindings.length > 0
+					? dataBindings.map((binding) => buildBindingAssignment(binding)).join("\n")
+					: "        // No direct data bindings for this module.";
+			return `    private setData${group.methodSuffix}(data: ${viewDataType}) {\n${body}\n    }`;
+		})
+		.join("\n\n");
+}
+
+function buildRenderMethods(spec: PrefabScriptScaffoldSpec): string {
+	return getBindingGroups(spec)
+		.map(
+			(group) =>
+				`    private render${group.methodSuffix}() {\n        // TODO: update ${group.groupName} presentation/state.\n    }`,
+		)
+		.join("\n\n");
+}
+
+function buildSetDataBody(spec: PrefabScriptScaffoldSpec): string {
+	const groups = getBindingGroups(spec);
+	if (groups.length === 0) {
+		return ["        if (!data) {", "            return;", "        }", "        this.viewData = data;", "        this.render();"].join(
+			"\n",
+		);
+	}
+	return [
+		"        if (!data) {",
+		"            return;",
+		"        }",
+		"        this.viewData = data;",
+		...groups.map((group) => `        this.setData${group.methodSuffix}(data);`),
+		"        this.render();",
+	].join("\n");
+}
+
+function buildRenderBody(spec: PrefabScriptScaffoldSpec): string {
+	const groups = getBindingGroups(spec);
+	return groups.length > 0
+		? groups.map((group) => `        this.render${group.methodSuffix}();`).join("\n")
+		: "        // TODO: add render modules when this prefab needs them.";
 }
 
 function buildButtonHandlers(spec: PrefabScriptScaffoldSpec): string {
@@ -311,7 +380,10 @@ function buildButtonHandlers(spec: PrefabScriptScaffoldSpec): string {
 export function buildPrefabComponentScript(specInput: PrefabScriptScaffoldSpec): string {
 	const dataInterfaceBlock = buildDataInterface(specInput);
 	const propertyBlock = buildPropertyDeclarations(specInput);
-	const refreshBody = buildRefreshBody(specInput);
+	const setDataBody = buildSetDataBody(specInput);
+	const renderBody = buildRenderBody(specInput);
+	const setDataMethods = buildSetDataMethods(specInput, specInput.dataInterfaceName || "any");
+	const renderMethods = buildRenderMethods(specInput);
 	const buttonHandlers = buildButtonHandlers(specInput);
 	const refreshDataType = specInput.dataInterfaceName || "any";
 
@@ -321,12 +393,23 @@ ${dataInterfaceBlock}@ccclass
 export default class ${specInput.className} extends cc.Component {
 ${propertyBlock}
 
-    refreshView(data: ${refreshDataType}) {
-        if (!data) {
-            return;
-        }
-${refreshBody}
+    private viewData: ${refreshDataType} | null = null;
+
+    setData(data: ${refreshDataType}) {
+${setDataBody}
     }
+
+    refreshView(data: ${refreshDataType}) {
+        this.setData(data);
+    }
+
+    render() {
+${renderBody}
+    }
+
+${setDataMethods || "    private setDataContent(data: any) {\n        void data;\n    }\n"}
+
+${renderMethods || "    private renderContent() {\n        // TODO: update content presentation/state.\n    }\n"}
 
 ${buttonHandlers || "    // TODO: add interaction handlers when this prefab needs them.\n"}
 }

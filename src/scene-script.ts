@@ -5,6 +5,7 @@ import { validateUiTree } from "./utils/UiPolicyValidation";
 import { resolvePreferredSpriteSizeMode } from "./utils/AutoNineSlice";
 import { preserveImportedSpriteNodeSize, resolveImportedSpritePreferredMode } from "./utils/ImportedDesignSprite";
 import { resolveSerializedPrefabSubtree } from "./utils/PrefabSerialization";
+import { resolveProjectFontAssetUrl } from "./utils/FontAssetResolver";
 
 /**
  * 更加健壮的节点查找函数，支持解压后的 UUID
@@ -160,6 +161,60 @@ const collectCurrentSpriteAssetUuids = () => {
         visit(scene);
     }
     return Array.from(collected);
+};
+
+let cachedProjectFontAssetUrls = null;
+
+const collectProjectFontAssetUrls = () => {
+    if (cachedProjectFontAssetUrls) {
+        return cachedProjectFontAssetUrls.slice();
+    }
+    if (!Editor || !Editor.assetdb || !Editor.assetdb.urlToFspath) {
+        cachedProjectFontAssetUrls = [];
+        return [];
+    }
+    try {
+        const fs = require("fs");
+        const path = require("path");
+        const rootFsPath = Editor.assetdb.urlToFspath("db://assets");
+        if (!rootFsPath || !fs.existsSync(rootFsPath)) {
+            cachedProjectFontAssetUrls = [];
+            return [];
+        }
+        const collected = [];
+        const visit = (dirPath) => {
+            fs.readdirSync(dirPath, { withFileTypes: true }).forEach((entry) => {
+                const nextPath = path.join(dirPath, entry.name);
+                if (entry.isDirectory()) {
+                    visit(nextPath);
+                    return;
+                }
+                if (!/\.(ttf|otf)$/i.test(entry.name)) {
+                    return;
+                }
+                const assetUrl =
+                    (Editor.assetdb.fspathToUrl && Editor.assetdb.fspathToUrl(nextPath)) ||
+                    null;
+                if (assetUrl) {
+                    collected.push(assetUrl);
+                }
+            });
+        };
+        visit(rootFsPath);
+        cachedProjectFontAssetUrls = collected;
+        return collected.slice();
+    } catch (_error) {
+        cachedProjectFontAssetUrls = [];
+        return [];
+    }
+};
+
+const resolveDesignFontAssetUuid = (fontFamily) => {
+    if (!fontFamily || !Editor || !Editor.assetdb || !Editor.assetdb.urlToUuid) {
+        return null;
+    }
+    const assetUrl = resolveProjectFontAssetUrl(fontFamily, collectProjectFontAssetUrls());
+    return assetUrl ? Editor.assetdb.urlToUuid(assetUrl) : null;
 };
 
 const extractTextureUrl = (assetUrl) => {
@@ -667,7 +722,40 @@ const createRepeatableContainerNode = (spec) => {
     return containerNode;
 };
 
-const applyDesignTextStyle = (node, textSpec) => {
+const enqueueDesignFontLoad = (label, textSpec, pendingLoads) => {
+    const fontUuid = (textSpec && textSpec.fontUuid) || resolveDesignFontAssetUuid(textSpec && textSpec.fontFamily);
+    if (!fontUuid) {
+        if (textSpec && textSpec.fontFamily && textSpec.fontFamily !== "Arial") {
+            Editor.warn(
+                `[import_design_layout] 未解析到字体资源 family=${textSpec.fontFamily} node=${label.node && label.node.name ? label.node.name : "unknown"}`,
+            );
+        }
+        label.useSystemFont = true;
+        label.font = null;
+        label.fontFamily = textSpec.fontFamily || "Arial";
+        return;
+    }
+    label.useSystemFont = false;
+    label.fontFamily = "";
+    pendingLoads.push((done) => {
+        cc.assetManager.loadAny(fontUuid, (err, asset) => {
+            if (!err && asset) {
+                label.useSystemFont = false;
+                label.font = asset;
+            } else {
+                Editor.warn(
+                    `[import_design_layout] 字体资源加载失败 family=${textSpec && textSpec.fontFamily ? textSpec.fontFamily : "unknown"} uuid=${fontUuid} error=${err ? String(err.message || err) : "unknown"}`,
+                );
+                label.useSystemFont = true;
+                label.font = null;
+                label.fontFamily = textSpec.fontFamily || "Arial";
+            }
+            done();
+        });
+    });
+};
+
+const applyDesignTextStyle = (node, textSpec, pendingLoads) => {
     if (!textSpec) {
         return;
     }
@@ -675,9 +763,8 @@ const applyDesignTextStyle = (node, textSpec) => {
     label.string = textSpec.content || "";
     label.fontSize = textSpec.fontSize || 24;
     label.lineHeight = textSpec.lineHeight || label.fontSize;
-    label.useSystemFont = true;
-    label.fontFamily = textSpec.fontFamily || "Arial";
     label.enableWrapText = true;
+    enqueueDesignFontLoad(label, textSpec, pendingLoads || []);
     applyDefaultLabelPolicy(label);
     label.horizontalAlign =
         textSpec.horizontalAlign === "RIGHT"
@@ -864,7 +951,7 @@ const createImportedDesignNode = (spec, pendingLoads, uiPolicy, importDiagnostic
     node.active = spec.visible !== false;
 
     if (spec.text) {
-        applyDesignTextStyle(node, spec.text);
+        applyDesignTextStyle(node, spec.text, pendingLoads);
     }
 
     enqueueDesignSpriteLoad(node, spec, pendingLoads, uiPolicy, importDiagnostics, pathSegments);

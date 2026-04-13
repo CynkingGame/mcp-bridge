@@ -467,7 +467,7 @@ export const getToolsList = () => {
 				properties: {
 					action: {
 						type: "string",
-						enum: ["get_selection", "set_selection", "refresh_editor"],
+						enum: ["get_selection", "set_selection", "refresh_editor", "reload_package"],
 						description: "操作类型",
 					},
 					target: {
@@ -478,7 +478,7 @@ export const getToolsList = () => {
 					properties: {
 						type: "object",
 						description:
-							"操作属性。⚠️极为重要：refresh_editor 必须通过 properties.path 指定精确的刷新路径（如 'db://assets/scripts/MyScript.ts'）。严禁不带 path 参数进行全局刷新 (db://assets)，这在大型项目中会导致编辑器卡死数分钟，严重阻塞工作流。",
+							"操作属性。⚠️极为重要：refresh_editor 必须通过 properties.path 指定精确的刷新路径（如 'db://assets/scripts/MyScript.ts'）。严禁不带 path 参数进行全局刷新 (db://assets)，这在大型项目中会导致编辑器卡死数分钟，严重阻塞工作流。reload_package 可通过 properties.name 指定包名，默认 mcp-bridge。",
 					},
 				},
 				required: ["action"],

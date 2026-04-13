@@ -20,6 +20,7 @@ export interface DesignNodeBindingSpec {
 	propertyName?: string;
 	dataKey?: string;
 	group?: string;
+	handlerName?: string;
 }
 
 export interface DesignLayoutLogicRule {
@@ -30,6 +31,7 @@ export interface DesignLayoutLogicRule {
 	propertyName?: string;
 	dataKey?: string;
 	group?: string;
+	handlerName?: string;
 }
 
 export interface DesignLayoutLogicSpec {
@@ -56,6 +58,7 @@ export interface DesignImportSpec {
 export interface NormalizedDesignTextSpec {
 	content: string;
 	fontFamily: string;
+	fontUuid?: string | null;
 	fontSize: number;
 	lineHeight: number;
 	horizontalAlign: "LEFT" | "CENTER" | "RIGHT";
@@ -140,7 +143,7 @@ export interface DesignLayoutLogicIssue {
 	id: string;
 	name: string;
 	nodeType: "container" | "image" | "text";
-	reason: "non-ascii-name" | "size-suffixed-name" | "layer-style-name";
+	reason: "non-ascii-name" | "size-suffixed-name" | "layer-style-name" | "placeholder-generic-name";
 }
 
 export interface DesignLayoutLogicReadiness {
@@ -193,6 +196,63 @@ function splitLogicPath(input: string | undefined): string[] {
 		.filter(Boolean);
 }
 
+function toPascalCase(input: string): string {
+	return String(input || "")
+		.replace(/[^A-Za-z0-9]+/g, " ")
+		.split(" ")
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join("");
+}
+
+function trimBindingStemSuffix(input: string): string {
+	return String(input || "").replace(/(?:Button|Label|Sprite|RichText|ScrollView|EditBox|Toggle|Group|Container)$/i, "");
+}
+
+function deriveSemanticNodeName(
+	node: NormalizedDesignNode,
+	rule: Pick<DesignLayoutLogicRule, "propertyName" | "dataKey">,
+): string | undefined {
+	const hint = String(rule.propertyName || rule.dataKey || "").trim();
+	if (!hint) {
+		return undefined;
+	}
+	const stem = toPascalCase(trimBindingStemSuffix(hint));
+	if (!stem) {
+		return undefined;
+	}
+	const prefix = node.isButton
+		? "btn"
+		: node.nodeType === "image"
+			? "img"
+			: node.nodeType === "text"
+				? "lab"
+				: "grp";
+	return `${prefix}${stem}`;
+}
+
+function shouldUseDerivedSemanticName(
+	node: NormalizedDesignNode,
+	rule: DesignLayoutLogicRule,
+	derivedName: string | undefined,
+): boolean {
+	if (!derivedName) {
+		return false;
+	}
+	const explicitName = String(rule.name || "").trim();
+	if (!explicitName) {
+		return true;
+	}
+	const expectedPrefix = node.isButton
+		? "btn"
+		: node.nodeType === "image"
+			? "img"
+			: node.nodeType === "text"
+				? "lab"
+				: "grp";
+	return !explicitName.toLowerCase().startsWith(expectedPrefix);
+}
+
 function normalizeLogicRule(rule: DesignLayoutLogicRule | null | undefined): DesignLayoutLogicRule | null {
 	if (!rule) {
 		return null;
@@ -207,6 +267,7 @@ function normalizeLogicRule(rule: DesignLayoutLogicRule | null | undefined): Des
 	const propertyName = String(rule.propertyName || "").trim() || undefined;
 	const dataKey = String(rule.dataKey || "").trim() || undefined;
 	const group = String(rule.group || "").trim() || undefined;
+	const handlerName = String(rule.handlerName || "").trim() || undefined;
 	return {
 		matchId,
 		matchName,
@@ -215,6 +276,7 @@ function normalizeLogicRule(rule: DesignLayoutLogicRule | null | undefined): Des
 		propertyName,
 		dataKey,
 		group,
+		handlerName,
 	};
 }
 
@@ -683,14 +745,19 @@ export function applyDesignLayoutLogic(
 			return;
 		}
 		const targetNode = found.node;
-		if (rule.name) {
-			targetNode.name = rule.name;
+		const derivedName = deriveSemanticNodeName(targetNode, rule);
+		const semanticName = shouldUseDerivedSemanticName(targetNode, rule, derivedName)
+			? derivedName
+			: rule.name || derivedName;
+		if (semanticName) {
+			targetNode.name = semanticName;
 		}
-		if (rule.propertyName || rule.dataKey || rule.group) {
+		if (rule.propertyName || rule.dataKey || rule.group || rule.handlerName) {
 			targetNode.binding = {
 				propertyName: rule.propertyName,
 				dataKey: rule.dataKey,
 				group: rule.group,
+				...(rule.handlerName ? { handlerName: rule.handlerName } : {}),
 			};
 		}
 		if (!rule.path || !found.parent || found.parent === root && splitLogicPath(rule.path).length === 0) {
@@ -789,6 +856,10 @@ function looksLikeLayerStyleName(name: string): boolean {
 	return /(?:^|[_\s-])layer(?:[_\s-]?\d+)?$/i.test(String(name || ""));
 }
 
+function looksLikePlaceholderGenericName(name: string): boolean {
+	return /^(?:img|txt|ctn|grp|spr|lab|lbl|btn|node|icon)[_-]?\d+$/i.test(String(name || ""));
+}
+
 export function analyzeDesignLayoutLogicReadiness(
 	layout: NormalizedDesignLayoutDocument,
 ): DesignLayoutLogicReadiness {
@@ -802,6 +873,13 @@ export function analyzeDesignLayoutLogicReadiness(
 				name: rawName,
 				nodeType: node.nodeType,
 				reason: "non-ascii-name",
+			});
+		} else if (looksLikePlaceholderGenericName(rawName)) {
+			issues.push({
+				id: node.id,
+				name: rawName,
+				nodeType: node.nodeType,
+				reason: "placeholder-generic-name",
 			});
 		} else if (looksLikeSizeSuffixedDesignName(rawName)) {
 			issues.push({

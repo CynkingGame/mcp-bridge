@@ -69,6 +69,7 @@ test("normalizeDesignImportArgs preserves logic-first import hints", () => {
                     name: "joinButton",
                     path: "actions",
                     propertyName: "joinButton",
+                    handlerName: "onJoinTap",
                     group: "actions",
                 },
             ],
@@ -86,6 +87,7 @@ test("normalizeDesignImportArgs preserves logic-first import hints", () => {
                 path: "actions",
                 propertyName: "joinButton",
                 dataKey: undefined,
+                handlerName: "onJoinTap",
                 group: "actions",
             },
         ],
@@ -466,6 +468,167 @@ test("analyzeDesignLayoutLogicReadiness passes after logic rewrites semantic nam
     assert.deepEqual(readiness.issues, []);
 });
 
+test("analyzeDesignLayoutLogicReadiness rejects generic placeholder names", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "InviteView",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "group",
+                        name: "ctn001",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [
+                            {
+                                id: "title",
+                                name: "txt001",
+                                type: "text",
+                                frame: { x: 40, y: 48, width: 220, height: 40 },
+                                style: {},
+                                text: {
+                                    content: "Invite Bonus",
+                                    font: {
+                                        family: "Arial",
+                                        size: 28,
+                                        lineHeight: 28,
+                                        align: "left",
+                                        color: { r: 255, g: 255, b: 255, a: 1 },
+                                    },
+                                },
+                                children: [],
+                            },
+                            {
+                                id: "claim",
+                                name: "img001",
+                                type: "image",
+                                frame: { x: 40, y: 120, width: 180, height: 60 },
+                                style: {},
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(normalized);
+
+    assert.equal(readiness.requiresExplicitLogic, true);
+    assert.deepEqual(
+        readiness.issues.map((issue) => issue.reason),
+        ["placeholder-generic-name", "placeholder-generic-name", "placeholder-generic-name"],
+    );
+});
+
+test("applyDesignLayoutLogic can derive semantic node names from AI binding hints", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "页面",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "summary",
+                        name: "模块",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 240 },
+                        style: {},
+                        children: [
+                            {
+                                id: "totalLabel",
+                                name: "总下注金额",
+                                type: "text",
+                                frame: { x: 40, y: 48, width: 260, height: 40 },
+                                style: {},
+                                text: {
+                                    content: "Total Wagered",
+                                    font: {
+                                        family: "Arial",
+                                        size: 28,
+                                        lineHeight: 28,
+                                        align: "left",
+                                        color: { r: 255, g: 255, b: 255, a: 1 },
+                                    },
+                                },
+                                children: [],
+                            },
+                            {
+                                id: "claim",
+                                name: "按钮",
+                                type: "image",
+                                frame: { x: 40, y: 120, width: 180, height: 60 },
+                                style: {},
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const logical = designJson.applyDesignLayoutLogic(normalized, {
+        rootName: "InviteView",
+        rules: [
+            {
+                matchId: "summary",
+                name: "grpSummary",
+                path: "content",
+                group: "summary",
+            },
+            {
+                matchId: "totalLabel",
+                propertyName: "totalWageredLabel",
+                dataKey: "totalWagered",
+                group: "summary",
+            },
+            {
+                matchId: "claim",
+                propertyName: "claimButton",
+                handlerName: "onClaimTap",
+                group: "actions",
+            },
+        ],
+    });
+
+    const summaryGroup = logical.root.children.find((child) => child.name === "content");
+    const summaryContainer = summaryGroup.children.find((child) => child.name === "grpSummary");
+    const totalLabel = summaryContainer.children.find((child) => child.id === "totalLabel");
+    const claimButton = summaryContainer.children.find((child) => child.id === "claim");
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(logical);
+
+    assert.equal(totalLabel.name, "labTotalWagered");
+    assert.deepEqual(totalLabel.binding, {
+        propertyName: "totalWageredLabel",
+        dataKey: "totalWagered",
+        group: "summary",
+    });
+    assert.equal(claimButton.name, "btnClaim");
+    assert.deepEqual(claimButton.binding, {
+        propertyName: "claimButton",
+        dataKey: undefined,
+        group: "actions",
+        handlerName: "onClaimTap",
+    });
+    assert.equal(readiness.requiresExplicitLogic, false);
+});
+
 test("applyDesignLayoutLogic rewrites node names and hierarchy around page logic", () => {
     assert.equal(typeof designJson.applyDesignLayoutLogic, "function");
 
@@ -538,13 +701,13 @@ test("applyDesignLayoutLogic rewrites node names and hierarchy around page logic
         logical.root.children.map((child) => child.name),
         ["header", "actions"],
     );
-    assert.equal(logical.root.children[0].children[0].name, "titleLabel");
+    assert.equal(logical.root.children[0].children[0].name, "labTitle");
     assert.deepEqual(logical.root.children[0].children[0].binding, {
         propertyName: "titleLabel",
         dataKey: "title",
         group: "header",
     });
-    assert.equal(logical.root.children[1].children[0].name, "claimButton");
+    assert.equal(logical.root.children[1].children[0].name, "btnClaim");
 });
 
 test("sanitizeNodeName can convert design layer names to english-safe node names", () => {

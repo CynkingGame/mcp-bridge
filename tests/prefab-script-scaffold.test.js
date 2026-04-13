@@ -219,3 +219,71 @@ test("buildPrefabScriptScaffoldSpec can use logic-first bindings and typed view 
     assert.doesNotMatch(script, /bindReferences/);
     assert.doesNotMatch(script, /findNode/);
 });
+
+test("buildPrefabComponentScript splits setData and render into group modules", () => {
+    const spec = buildPrefabScriptScaffoldSpec(
+        "db://assets/hall/prefabs/agent/InviteView.prefab",
+        {
+            name: "InviteView",
+            components: [],
+            children: [
+                {
+                    name: "SummaryTitle",
+                    components: ["Label"],
+                    binding: {
+                        propertyName: "summaryTitleLabel",
+                        dataKey: "summaryTitle",
+                        group: "summary",
+                    },
+                    children: [],
+                },
+                {
+                    name: "SummaryValue",
+                    components: ["Label"],
+                    binding: {
+                        propertyName: "summaryValueLabel",
+                        dataKey: "summaryValue",
+                        group: "summary",
+                    },
+                    children: [],
+                },
+                {
+                    name: "ClaimButton",
+                    components: ["Button"],
+                    binding: {
+                        propertyName: "claimButton",
+                        group: "actions",
+                        handlerName: "onClaimTap",
+                    },
+                    children: [],
+                },
+            ],
+        },
+        {
+            dataInterfaceName: "InviteViewState",
+        },
+    );
+
+    const script = buildPrefabComponentScript(spec);
+    const setDataBody = script.match(/setData\(data: InviteViewState\) \{([\s\S]*?)\n    \}/);
+    const renderBody = script.match(/render\(\) \{([\s\S]*?)\n    \}/);
+
+    assert.match(script, /private viewData: InviteViewState \| null = null;/);
+    assert.match(script, /refreshView\(data: InviteViewState\) \{\n        this\.setData\(data\);\n    \}/);
+    assert.ok(setDataBody, "expected a top-level setData body");
+    assert.ok(renderBody, "expected a top-level render body");
+    assert.match(setDataBody[1], /this\.viewData = data;/);
+    assert.match(setDataBody[1], /this\.setDataSummary\(data\);/);
+    assert.match(setDataBody[1], /this\.render\(\);/);
+    assert.doesNotMatch(setDataBody[1], /\.string =/);
+    assert.match(renderBody[1], /this\.renderSummary\(\);/);
+    assert.match(renderBody[1], /this\.renderActions\(\);/);
+    assert.doesNotMatch(renderBody[1], /\.string =/);
+    assert.match(
+        script,
+        /private setDataSummary\(data: InviteViewState\) \{[\s\S]*this\.summaryTitleLabel\.string = String\(data\.summaryTitle\);[\s\S]*this\.summaryValueLabel\.string = String\(data\.summaryValue\);[\s\S]*\}/,
+    );
+    assert.match(script, /private renderSummary\(\) \{/);
+    assert.match(script, /private renderActions\(\) \{/);
+    assert.match(script, /onClaimTap\(event\?: cc\.Event\.EventTouch, customData\?: string\)/);
+});
