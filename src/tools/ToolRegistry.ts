@@ -4,6 +4,9 @@ import { getUiPolicySummary, loadProjectUiPolicyForCurrentEditor } from "../util
 export const getToolsList = () => {
 	const uiPolicy = loadProjectUiPolicyForCurrentEditor();
 	const uiPolicySummary = getUiPolicySummary(uiPolicy);
+	const nodeNamingGuard = uiPolicy.nodeNaming && uiPolicy.nodeNaming.englishOnly
+		? " 节点名称必须使用英文，且仅允许字母、数字、空格、下划线和连字符。"
+		: "";
 	const globalPrecautions =
 		"【AI 安全守则】: 1. 执行任何写操作前必须先通过 get_scene_hierarchy 或 manage_components(get) 验证主体存在。 2. 严禁基于假设盲目猜测属性名。 3. 资源属性（如 cc.Prefab）必须通过 UUID 进行赋值。 4. 严禁频繁刷新全局资源 (refresh_editor)，必须通过 properties.path 指定具体修改的文件或目录以防止编辑器长期卡死。";
 	return [
@@ -14,7 +17,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "set_node_name",
-			description: `${globalPrecautions} 修改指定节点的名称`,
+			description: `${globalPrecautions} 修改指定节点的名称。${nodeNamingGuard}`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -92,7 +95,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "create_prefab",
-			description: `${globalPrecautions} 将场景中的某个节点保存为预制体资源。对于全屏 UI 根节点，优先传入 rootPreset（如 screen-root / safe-area-root）或让插件按项目 Canvas 设计分辨率自动识别并补全根节点适配。`,
+			description: `${globalPrecautions} 将场景中的某个节点保存为预制体资源。对于全屏 UI 根节点，优先传入 rootPreset（如 screen-root / safe-area-root）或让插件按项目 Canvas 设计分辨率自动识别并补全根节点适配。创建成功后会尝试同步生成并挂载同名脚本，为动态数据/交互组件建立 @property 绑定。${nodeNamingGuard}`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -170,7 +173,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "analyze_design_layout",
-			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失和显式素材映射，再决定 import_design_layout 参数。`,
+			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失和显式素材映射，再结合逻辑命名/逻辑分组方案决定 import_design_layout 参数。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -195,6 +198,10 @@ export const getToolsList = () => {
 						type: "object",
 						description: "可选的显式图片映射。用于先验证 AI 准备好的映射是否完整。",
 					},
+					logic: {
+						type: "object",
+						description: "可选的逻辑重组方案。用于在正式导入前先验证根节点命名、逻辑分组和 property 规划是否合理。",
+					},
 					strictImageAssets: {
 						type: "boolean",
 						description: "兼容旧参数。当前会始终按正式素材模式评估图片节点，缺图视为未满足导入条件。",
@@ -205,7 +212,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "import_design_layout",
-			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原层级、尺寸、文本样式，并且只使用你提供的正式图片资源。`,
+			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原尺寸和文本样式，并且只使用你提供的正式图片资源。若传入 logic 方案，会先按页面逻辑重命名和重组节点，再生成并绑定以逻辑成员为中心的脚本 @property。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -232,6 +239,10 @@ export const getToolsList = () => {
 					imageAssetMap: {
 						type: "object",
 						description: "可选的显式图片映射。key 可填节点名或设计节点 id，value 为目标 Sprite 资源路径。用于自动匹配不稳定时的精确绑定。",
+					},
+					logic: {
+						type: "object",
+						description: "可选的逻辑重组方案。支持 rootName、dataInterfaceName、rules(matchId/matchName/path/name/propertyName/dataKey/group)，用于按页面逻辑而不是设计层级生成节点和脚本。",
 					},
 					rootPreset: {
 						type: "string",
@@ -265,7 +276,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "create_node",
-			description: `${globalPrecautions} 在当前场景中创建一个新节点。重要提示：1. 如果指定 parentId，必须先通过 get_scene_hierarchy 确保该父节点真实存在且未被删除。2. 类型说明：'sprite' (100x100 尺寸 + 默认贴图), 'button' (150x50 尺寸 + 深色底图 + Button组件), 'label' (120x40 尺寸 + Label组件), 'empty' (纯空节点)。3. 当前项目启用了 UI policy，优先使用 uiPreset / layout，而不是手动猜测坐标。项目预设：${uiPolicySummary}`,
+			description: `${globalPrecautions} 在当前场景中创建一个新节点。重要提示：1. 如果指定 parentId，必须先通过 get_scene_hierarchy 确保该父节点真实存在且未被删除。2. 类型说明：'sprite' (100x100 尺寸 + 默认贴图), 'button' (150x50 尺寸 + 深色底图 + Button组件), 'label' (120x40 尺寸 + Label组件，overflow 默认保持 NONE), 'empty' (纯空节点)。3. 当前项目启用了 UI policy，优先使用 uiPreset / layout，而不是手动猜测坐标。项目预设：${uiPolicySummary}.${nodeNamingGuard}`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -321,7 +332,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "validate_ui_prefab",
-			description: `${globalPrecautions} 校验当前 UI 预制体/节点是否符合项目 UI policy。默认检查根节点适配与按钮锚点，可用于 AI 修改 prefab 后的自检。`,
+			description: `${globalPrecautions} 校验当前 UI 预制体/节点是否符合项目 UI policy。默认检查根节点适配、按钮锚点与节点英文命名约束，可用于 AI 修改 prefab 后的自检。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -428,7 +439,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "prefab_management",
-			description: `${globalPrecautions} 预制体管理。对于 UI 预制体创建，优先传入 rootPreset 以套用项目根节点适配策略。`,
+			description: `${globalPrecautions} 预制体管理。对于 UI 预制体创建，优先传入 rootPreset 以套用项目根节点适配策略。create 动作成功后会尝试同步生成并挂载同名脚本，为动态数据/交互组件建立 @property 绑定。`,
 			inputSchema: {
 				type: "object",
 				properties: {

@@ -1,4 +1,5 @@
 import { resolveNamedUiPreset, resolvePrefabRootPolicy, UiPolicyConfig, UiLayoutName } from "./UiPolicy";
+import { getNodeNameValidationMessage } from "./NodeNaming";
 
 export interface UiWidgetSnapshot {
 	isAlignTop?: boolean;
@@ -143,6 +144,17 @@ export function validateUiTree(
 	}
 
 	walkTree(rootNode, (currentNode) => {
+		const nodeNameError = getNodeNameValidationMessage(policy, currentNode.name);
+		if (nodeNameError) {
+			findings.push({
+				severity: "error",
+				code: "node-name-non-english",
+				message: nodeNameError,
+				nodeName: currentNode.name,
+				nodeUuid: currentNode.uuid,
+			});
+		}
+
 		if (!hasButtonComponent(currentNode)) {
 			return;
 		}

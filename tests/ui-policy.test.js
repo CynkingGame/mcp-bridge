@@ -140,6 +140,48 @@ test("validateUiTree passes for a screen-root with centered buttons", () => {
     assert.deepEqual(result.findings, []);
 });
 
+test("validateUiTree reports non-english node names when the policy requires english only", () => {
+    const policy = mergeUiPolicy(getDefaultUiPolicy(), {
+        nodeNaming: {
+            englishOnly: true,
+        },
+    });
+
+    const result = validateUiTree(policy, {
+        name: "邀请界面",
+        uuid: "root",
+        anchor: { x: 0.5, y: 0.5 },
+        size: { width: 960, height: 640 },
+        hasSafeArea: false,
+        widget: {
+            isAlignTop: true,
+            isAlignBottom: true,
+            isAlignLeft: true,
+            isAlignRight: true,
+        },
+        children: [
+            {
+                name: "PlayButton",
+                uuid: "button-1",
+                anchor: { x: 0.5, y: 0.5 },
+                components: ["Button"],
+                children: [
+                    {
+                        name: "标题",
+                        uuid: "label-1",
+                        components: ["Label"],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.findings.some((finding) => finding.code === "node-name-non-english"), true);
+    assert.equal(result.findings.filter((finding) => finding.code === "node-name-non-english").length, 2);
+});
+
 test("workflow guide mentions the recommended UI prefab toolchain", () => {
     const policy = getDefaultUiPolicy();
 
@@ -154,6 +196,8 @@ test("workflow guide mentions the recommended UI prefab toolchain", () => {
     assert.match(guide, /imageAssetDir/);
     assert.match(guide, /strictImageAssets/);
     assert.match(guide, /base64/);
+    assert.match(guide, /overflow/);
+    assert.match(guide, /@property/);
 });
 
 test("resource list exposes ui policy and workflow resources", () => {

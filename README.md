@@ -87,6 +87,8 @@ npm run build
 - 对“同结构重复 3 次以上”的列表项、奖励格子、排行项，可使用 `scaffold_repeatable_ui` 一次性生成 Item prefab、容器 prefab 和脚本骨架。
 - 对 AI 自动化流程，推荐形成固定闭环：`create_node/create_prefab` -> `apply_ui_policy` -> `validate_ui_prefab`。
 - 对设计稿导入流程，推荐形成固定闭环：`analyze_design_layout` -> AI 明确补齐 `imageAssetMap/rootPreset` -> `import_design_layout` -> `validate_ui_prefab`。
+- 若设计稿节点命名和层级不适合直接落地业务页面，可在 `analyze_design_layout` / `import_design_layout` 中额外传入 `logic`，先按页面逻辑重命名和重组，再生成脚本。
+- 设计导入生成的脚本现在优先依赖编辑器内已绑定好的 `@property`，不再生成运行时 `bindReferences/findComponent` 回填代码。
 - `autoNineSlice` 的处理标记会写入 `settings/mcp-bridge.json`，避免同一纹理被重复触发。
 - MCP 还会额外暴露两个标准资源：
   - `cocos://ui/policy`

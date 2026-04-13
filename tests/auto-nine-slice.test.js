@@ -29,6 +29,43 @@ test("matches a contains rule for 点9 textures", () => {
     assert.deepEqual(resolved.border, [20, 20, 20, 20]);
 });
 
+test("auto derives border for 点9 textures from the smaller texture side", () => {
+    const policy = normalizeAutoNineSlicePolicy({
+        enabled: true,
+        rules: [],
+    });
+
+    const resolved = resolveAutoNineSliceRule(policy, "说明tips组件1-bg（点9）.png", {
+        width: 48,
+        height: 60,
+    });
+
+    assert.ok(resolved);
+    assert.equal(resolved.pattern, "点9");
+    assert.deepEqual(resolved.border, [24, 24, 24, 24]);
+});
+
+test("点9 textures prefer auto-derived border over configured rule borders", () => {
+    const policy = normalizeAutoNineSlicePolicy({
+        enabled: true,
+        rules: [
+            {
+                pattern: "点9",
+                border: [20, 20, 20, 20],
+            },
+        ],
+    });
+
+    const resolved = resolveAutoNineSliceRule(policy, "说明tips组件1-bg（点9）.png", {
+        width: 48,
+        height: 60,
+    });
+
+    assert.ok(resolved);
+    assert.equal(resolved.pattern, "点9");
+    assert.deepEqual(resolved.border, [24, 24, 24, 24]);
+});
+
 test("treats zero border as not configured", () => {
     const border = readConfiguredNineSliceBorder({
         borderTop: 0,
@@ -97,6 +134,17 @@ test("preferred sprite size mode is CUSTOM for 点9 rule matches", () => {
     });
 
     const sizeMode = resolvePreferredSpriteSizeMode(policy, "按钮点9.png", null);
+
+    assert.equal(sizeMode, "CUSTOM");
+});
+
+test("preferred sprite size mode is CUSTOM for 点9 textures without explicit rules", () => {
+    const policy = normalizeAutoNineSlicePolicy({
+        enabled: true,
+        rules: [],
+    });
+
+    const sizeMode = resolvePreferredSpriteSizeMode(policy, "按钮背景（点9）.png", null);
 
     assert.equal(sizeMode, "CUSTOM");
 });

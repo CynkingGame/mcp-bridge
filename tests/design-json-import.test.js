@@ -31,6 +31,8 @@ test("tool registry exposes import_design_layout", () => {
     assert.ok(tool, "expected import_design_layout to be registered");
     assert.match(tool.description, /设计 JSON|设计稿/);
     assert.ok(tool.inputSchema.properties.strictImageAssets);
+    assert.ok(tool.inputSchema.properties.logic);
+    assert.ok(analyzeTool.inputSchema.properties.logic);
     assert.equal("importGeneratedShapes" in tool.inputSchema.properties, false);
     assert.equal("importGeneratedShapes" in analyzeTool.inputSchema.properties, false);
 });
@@ -52,6 +54,42 @@ test("normalizeDesignImportArgs builds asset output paths", () => {
     assert.deepEqual(spec.imageAssetDirs, ["db://assets/art/hall/prize"]);
     assert.equal(spec.importGeneratedShapes, false);
     assert.equal(spec.strictImageAssets, true);
+});
+
+test("normalizeDesignImportArgs preserves logic-first import hints", () => {
+    const spec = designJson.normalizeDesignImportArgs({
+        jsonPath: "hall_info/Ludo Tour选场-Tab-Prize.json",
+        prefabName: "PrizePanel",
+        logic: {
+            rootName: "PrizeDialog",
+            dataInterfaceName: "PrizeDialogState",
+            rules: [
+                {
+                    matchName: "btn",
+                    name: "joinButton",
+                    path: "actions",
+                    propertyName: "joinButton",
+                    group: "actions",
+                },
+            ],
+        },
+    });
+
+    assert.deepEqual(spec.logic, {
+        rootName: "PrizeDialog",
+        dataInterfaceName: "PrizeDialogState",
+        rules: [
+            {
+                matchId: undefined,
+                matchName: "btn",
+                name: "joinButton",
+                path: "actions",
+                propertyName: "joinButton",
+                dataKey: undefined,
+                group: "actions",
+            },
+        ],
+    });
 });
 
 test("normalizeDesignLayoutDocument prefers provided image assets over embedded base64", () => {
@@ -188,4 +226,104 @@ test("analyzeNormalizedDesignLayout reports unresolved images for AI-side planni
     assert.equal(Array.isArray(analysis.resolvedImageNodes), true);
     assert.equal(analysis.resolvedImageNodes.some((node) => node.name === "btn"), true);
     assert.equal(analysis.missingImageNodes.length > 0, true);
+});
+
+test("applyDesignLayoutLogic rewrites node names and hierarchy around page logic", () => {
+    assert.equal(typeof designJson.applyDesignLayoutLogic, "function");
+
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "页面",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "title",
+                        name: "标题",
+                        type: "text",
+                        frame: { x: 40, y: 60, width: 240, height: 40 },
+                        style: {},
+                        text: {
+                            content: "Invite Data",
+                            font: {
+                                family: "Arial",
+                                size: 32,
+                                lineHeight: 32,
+                                align: "left",
+                                color: { r: 1, g: 1, b: 1, a: 1 },
+                            },
+                        },
+                        children: [],
+                    },
+                    {
+                        id: "claim",
+                        name: "领取按钮",
+                        type: "image",
+                        frame: { x: 40, y: 120, width: 160, height: 64 },
+                        style: {},
+                        children: [],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const logical = designJson.applyDesignLayoutLogic(normalized, {
+        rootName: "InviteView",
+        rules: [
+            {
+                matchId: "title",
+                name: "titleLabel",
+                path: "header",
+                propertyName: "titleLabel",
+                dataKey: "title",
+                group: "header",
+            },
+            {
+                matchId: "claim",
+                name: "claimButton",
+                path: "actions",
+                propertyName: "claimButton",
+                group: "actions",
+            },
+        ],
+    });
+
+    assert.equal(logical.root.name, "InviteView");
+    assert.deepEqual(
+        logical.root.children.map((child) => child.name),
+        ["header", "actions"],
+    );
+    assert.equal(logical.root.children[0].children[0].name, "titleLabel");
+    assert.deepEqual(logical.root.children[0].children[0].binding, {
+        propertyName: "titleLabel",
+        dataKey: "title",
+        group: "header",
+    });
+    assert.equal(logical.root.children[1].children[0].name, "claimButton");
+});
+
+test("sanitizeNodeName can convert design layer names to english-safe node names", () => {
+    const { sanitizeNodeName } = require("../dist/utils/NodeNaming.js");
+    const usedNames = new Set();
+
+    const rootName = sanitizeNodeName("邀请数据", {
+        fallbackPrefix: "Container",
+        fallbackSuffix: "root",
+        usedNames,
+    });
+    const childName = sanitizeNodeName("tab-底槽（共用）（点9）", {
+        fallbackPrefix: "Sprite",
+        fallbackSuffix: "layer_1",
+        usedNames,
+    });
+
+    assert.equal(rootName, "Container_root");
+    assert.equal(childName, "tab_9");
 });

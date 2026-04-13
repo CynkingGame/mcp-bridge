@@ -1,4 +1,5 @@
 import { AutoNineSlicePolicy } from "./AutoNineSlice";
+import type { UiNodeNamingPolicy } from "./NodeNaming";
 
 export const UI_LAYOUT_NAMES = [
 	"center",
@@ -57,6 +58,7 @@ export interface UiPolicyConfig {
 		recommendedScriptApis: string[];
 	};
 	autoNineSlice?: Partial<AutoNineSlicePolicy>;
+	nodeNaming?: Partial<UiNodeNamingPolicy>;
 	presets: Record<string, UiPresetConfig>;
 }
 
@@ -133,6 +135,11 @@ const DEFAULT_UI_POLICY: UiPolicyConfig = {
 		state: {
 			processed: {},
 		},
+	},
+	nodeNaming: {
+		englishOnly: false,
+		allowedPattern: "^[A-Za-z0-9][A-Za-z0-9 _-]*$",
+		autoSanitizeDesignLayout: true,
 	},
 	presets: {
 		button: {

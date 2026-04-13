@@ -23,6 +23,13 @@ export interface AutoNineSlicePolicy {
 	state: AutoNineSliceState;
 }
 
+export interface TextureSizeLike {
+	width?: number | null;
+	height?: number | null;
+}
+
+const AUTO_NINE_SLICE_NAME_MARKER = "点9";
+
 const DEFAULT_AUTO_NINE_SLICE_POLICY: AutoNineSlicePolicy = {
 	enabled: false,
 	triggerOnSpriteAssignment: true,
@@ -107,13 +114,49 @@ export function getAutoNineSliceRuleSignature(rule: Pick<AutoNineSliceRule, "pat
 	return `${rule.pattern}|${rule.border.join(",")}`;
 }
 
+function isPositiveTextureDimension(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+export function isAutoNineSliceTextureName(textureName: string): boolean {
+	if (!textureName) {
+		return false;
+	}
+	return textureName.includes(AUTO_NINE_SLICE_NAME_MARKER);
+}
+
+export function deriveAutoNineSliceBorder(textureSize?: TextureSizeLike | null): NineSliceBorder | null {
+	if (!textureSize) {
+		return null;
+	}
+	const { width, height } = textureSize;
+	if (!isPositiveTextureDimension(width) || !isPositiveTextureDimension(height)) {
+		return null;
+	}
+	const inset = Math.floor(Math.min(width, height) / 2);
+	return [inset, inset, inset, inset];
+}
+
 export function resolveAutoNineSliceRule(
 	policyInput: AutoNineSlicePolicy | { autoNineSlice?: AutoNineSlicePolicy } | null | undefined,
 	textureName: string,
+	textureSize?: TextureSizeLike | null,
 ): AutoNineSliceRule | null {
 	const policy = normalizeAutoNineSlicePolicy(policyInput);
 	if (!policy.enabled || !textureName) {
 		return null;
+	}
+
+	if (isAutoNineSliceTextureName(textureName)) {
+		const autoBorder = deriveAutoNineSliceBorder(textureSize);
+		if (autoBorder) {
+			return {
+				pattern: AUTO_NINE_SLICE_NAME_MARKER,
+				border: autoBorder,
+				matchMode: "contains",
+				description: "Auto-derived from the smaller texture side.",
+			};
+		}
 	}
 
 	const normalizedName = textureName.toLowerCase();
@@ -166,6 +209,9 @@ export function resolvePreferredSpriteSizeMode(
 	subMeta?: Record<string, any> | null,
 ): "RAW" | "CUSTOM" {
 	if (readConfiguredNineSliceBorder(subMeta)) {
+		return "CUSTOM";
+	}
+	if (isAutoNineSliceTextureName(textureName)) {
 		return "CUSTOM";
 	}
 	if (resolveAutoNineSliceRule(policyInput, textureName)) {

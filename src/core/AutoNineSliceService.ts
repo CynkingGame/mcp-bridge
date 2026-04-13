@@ -4,7 +4,9 @@ import {
 	AutoNineSlicePolicy,
 	AutoNineSliceRule,
 	AutoNineSliceState,
+	deriveAutoNineSliceBorder,
 	hasProcessedAutoNineSliceMarker,
+	isAutoNineSliceTextureName,
 	markAutoNineSliceProcessed,
 	normalizeAutoNineSlicePolicy,
 	readConfiguredNineSliceBorder,
@@ -97,6 +99,45 @@ function getPrimarySubMeta(meta: any): Record<string, any> | null {
 	return firstEntry ? meta.subMetas[firstEntry] : null;
 }
 
+function resolveTextureSize(
+	meta: any,
+	subMeta?: Record<string, any> | null,
+): {
+	width: number;
+	height: number;
+} | null {
+	const candidates = [
+		{
+			width: subMeta && subMeta.rawWidth,
+			height: subMeta && subMeta.rawHeight,
+		},
+		{
+			width: subMeta && subMeta.width,
+			height: subMeta && subMeta.height,
+		},
+		{
+			width: meta && meta.width,
+			height: meta && meta.height,
+		},
+	];
+	for (const candidate of candidates) {
+		if (
+			typeof candidate.width === "number" &&
+			Number.isFinite(candidate.width) &&
+			candidate.width > 0 &&
+			typeof candidate.height === "number" &&
+			Number.isFinite(candidate.height) &&
+			candidate.height > 0
+		) {
+			return {
+				width: candidate.width,
+				height: candidate.height,
+			};
+		}
+	}
+	return null;
+}
+
 function applyBorderToSubMeta(subMeta: Record<string, any>, border: [number, number, number, number]) {
 	if (subMeta.border !== undefined) {
 		subMeta.border = border;
@@ -128,13 +169,10 @@ function ensureTexture(
 		return callback(null, buildNoopResult(null, "invalid-texture"));
 	}
 
-	const rule = resolveAutoNineSliceRule(context.policy, texture.textureName);
-	if (!rule) {
+	const hasAutoNineSliceName = isAutoNineSliceTextureName(texture.textureName);
+	const matchedConfiguredRule = resolveAutoNineSliceRule(context.policy, texture.textureName);
+	if (!hasAutoNineSliceName && !matchedConfiguredRule) {
 		return callback(null, buildNoopResult(texture, "no-rule"));
-	}
-
-	if (hasProcessedAutoNineSliceMarker(context.state, texture.textureUrl, rule)) {
-		return callback(null, buildNoopResult(texture, "already-marked", { border: rule.border }));
 	}
 
 	const meta = loadTextureMeta(texture);
@@ -144,6 +182,19 @@ function ensureTexture(
 	const subMeta = getPrimarySubMeta(meta);
 	if (!subMeta) {
 		return callback(`纹理缺少 subMetas，无法设置 9-slice: ${texture.textureUrl}`);
+	}
+	const textureSize = resolveTextureSize(meta, subMeta);
+	const rule =
+		resolveAutoNineSliceRule(context.policy, texture.textureName, textureSize) || matchedConfiguredRule;
+	if (!rule) {
+		if (hasAutoNineSliceName && !deriveAutoNineSliceBorder(textureSize)) {
+			return callback(null, buildNoopResult(texture, "invalid-texture-size"));
+		}
+		return callback(null, buildNoopResult(texture, "no-rule"));
+	}
+
+	if (hasProcessedAutoNineSliceMarker(context.state, texture.textureUrl, rule)) {
+		return callback(null, buildNoopResult(texture, "already-marked", { border: rule.border }));
 	}
 
 	const existingBorder = readConfiguredNineSliceBorder(subMeta);

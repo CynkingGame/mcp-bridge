@@ -16,9 +16,20 @@ import {
 } from "../utils/RepeatableUiScaffold";
 import {
 	analyzeNormalizedDesignLayout,
+	applyDesignLayoutLogic,
 	normalizeDesignImportArgs,
 	normalizeDesignLayoutDocument,
 } from "../utils/DesignJson";
+import {
+	buildPrefabComponentBindings,
+	buildPrefabComponentScript,
+	buildPrefabScriptScaffoldSpec,
+} from "../utils/PrefabScriptScaffold";
+import {
+	cloneSanitizedDesignNodeTree,
+	getNodeNameValidationMessage,
+	getNodeNamingPolicy,
+} from "../utils/NodeNaming";
 declare const Editor: any;
 
 function getNewSceneTemplate() { return `[
@@ -179,6 +190,30 @@ function getNewSceneTemplate() { return `[
 export class ToolDispatcher {
   static isSceneBusy = false;
 
+  static _validateNodeNameOrReply(nodeName: string, callback) {
+		const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+		return this._validateNodeNameWithPolicyOrReply(uiPolicy, nodeName, callback);
+  }
+
+  static _validateNodeNameWithPolicyOrReply(uiPolicy, nodeName: string, callback) {
+		const error = getNodeNameValidationMessage(uiPolicy, nodeName);
+		if (!error) {
+			return true;
+		}
+		callback(error);
+		return false;
+  }
+
+  static _sanitizeImportedLayoutNames(layout, uiPolicy) {
+		const namingPolicy = getNodeNamingPolicy(uiPolicy);
+		if (!namingPolicy.englishOnly || !namingPolicy.autoSanitizeDesignLayout) {
+			return layout;
+		}
+		return cloneSanitizedDesignNodeTree(layout, {
+			usedNames: new Set<string>(),
+		});
+  }
+
   static _ensureParentDirSync(targetPath: string) {
       const ext = pathModule.extname(targetPath);
       let dir = targetPath;
@@ -265,6 +300,9 @@ export class ToolDispatcher {
 				break;
 
 			case "set_node_name":
+				if (!ToolDispatcher._validateNodeNameOrReply(args.newName, callback)) {
+					return;
+				}
 				// 使用 scene:set-property 以支持撤销
 				Editor.Ipc.sendToPanel("scene", "scene:set-property", {
 					id: args.id,
@@ -331,6 +369,9 @@ export class ToolDispatcher {
 
 			case "create_prefab": {
 				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				if (!ToolDispatcher._validateNodeNameWithPolicyOrReply(uiPolicy, args.prefabName, callback)) {
+					return;
+				}
 				// 先重命名节点以匹配预制体名称
 				Editor.Ipc.sendToPanel("scene", "scene:set-property", {
 					id: args.nodeId,
@@ -380,6 +421,9 @@ export class ToolDispatcher {
 
 			case "create_node":
 				args.uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				if (!ToolDispatcher._validateNodeNameWithPolicyOrReply(args.uiPolicy, args.name, callback)) {
+					return;
+				}
 				if (args.type === "sprite" || args.type === "button") {
 					const splashUuid = Editor.assetdb.urlToUuid(
 						"db://internal/image/default_sprite_splash.png/default_sprite_splash",
@@ -596,36 +640,60 @@ export class ToolDispatcher {
 	 * @param {Function} callback 完成回调 (err, result)
 	 */
 
-  static _createPrefabViaSceneScript(nodeId, prefabUrl, rootPreset, uiPolicy, callback) {
-		CommandQueue.callSceneScriptWithTimeout(
-			"mcp-bridge",
-			"create-prefab",
-			{ nodeId, rootPreset, uiPolicy },
-			(err, serializedData) => {
-			if (err) {
-				// addLog("error", `[create-prefab] 序列化节点失败: ${err}`);
-				return callback(err);
+	static _createPrefabViaSceneScript(nodeId, prefabUrl, rootPreset, uiPolicy, callback) {
+		ToolDispatcher._getHierarchySnapshot(nodeId, (snapshotErr, sourceHierarchy) => {
+			if (snapshotErr) {
+				return callback(snapshotErr);
 			}
+			const rootSnapshot = ToolDispatcher._buildPrefabScriptSourceSnapshot(sourceHierarchy);
+			const finalize = (createErr, createMessage = "") => {
+				if (createErr) {
+					return callback(createErr);
+				}
+				ToolDispatcher._generateAndAttachPrefabScript(
+					prefabUrl,
+					rootSnapshot,
+					{
+						rootName: rootSnapshot && rootSnapshot.name,
+						overwriteScript: false,
+					},
+					(scriptErr, scriptResult) => {
+						if (scriptErr) {
+							return callback(scriptErr);
+						}
+						callback(null, {
+							prefabPath: prefabUrl,
+							message: createMessage,
+							script: scriptResult,
+						});
+					},
+				);
+			};
+			CommandQueue.callSceneScriptWithTimeout(
+				"mcp-bridge",
+				"create-prefab",
+				{ nodeId, rootPreset, uiPolicy },
+				(err, serializedData) => {
+				if (err) {
+					return finalize(err);
+				}
 
-			if (!serializedData) {
-				return callback("序列化返回空数据");
-			}
+				if (!serializedData) {
+					return finalize("序列化返回空数据");
+				}
 
-			// serializedData 是 Editor.serialize 返回的 JSON 字符串
-			// 经过 _safeCreateAsset 安全落盘并刷新
-			AssetPatcher.safeCreateAsset(prefabUrl, serializedData, callback, (doneCreate) => {
-				// 安全网：使用 crypto 生成更安全的 fileId 替换场景脚本中留空的根节点 fileId
-				// 在闭锁区内修改，保障数据完整
-				setTimeout(() => {
-					const prefabFspath = Editor.assetdb.urlToFspath(prefabUrl);
-					if (prefabFspath) { ToolDispatcher.fixPrefabRootFileId(prefabFspath);
-					}
-					// 完成附加修改后，放行 Watcher 闭锁
-					doneCreate(null, `预制体已创建: ${prefabUrl}`);
-				}, 500);
-			});
-			},
-		);
+				AssetPatcher.safeCreateAsset(prefabUrl, serializedData, finalize, (doneCreate) => {
+					setTimeout(() => {
+						const prefabFspath = Editor.assetdb.urlToFspath(prefabUrl);
+						if (prefabFspath) {
+							ToolDispatcher.fixPrefabRootFileId(prefabFspath);
+						}
+						doneCreate(null, `预制体已创建: ${prefabUrl}`);
+					}, 500);
+				});
+				},
+			);
+		});
 	}
 
   static _writeOrCreateAsset(assetPath, content, overwrite, callback) {
@@ -767,6 +835,80 @@ export class ToolDispatcher {
 		return null;
 	}
 
+  static _buildPrefabScriptSourceSnapshot(node) {
+		if (!node) {
+			return null;
+		}
+		const components = [];
+		const rawComponents = Array.isArray(node.components) ? node.components : [];
+		rawComponents.forEach((componentName) => {
+			const normalized = String(componentName || "").replace(/^cc\./, "");
+			if (normalized) {
+				components.push(normalized);
+			}
+		});
+		return {
+			name: node.name,
+			components,
+			children: (node.children || []).map((child) => ToolDispatcher._buildPrefabScriptSourceSnapshot(child)),
+		};
+  }
+
+  static _buildDesignLayoutScriptSourceSnapshot(node) {
+		if (!node) {
+			return null;
+		}
+		const components = [];
+		if (node.text) {
+			components.push("Label");
+		}
+		if (node.visual) {
+			components.push("Sprite");
+		}
+		if (node.isButton) {
+			components.push("Button");
+		}
+	return {
+			name: node.name,
+			components,
+			binding: node.binding || undefined,
+			children: (node.children || []).map((child) => ToolDispatcher._buildDesignLayoutScriptSourceSnapshot(child)),
+		};
+  }
+
+  static _getHierarchySnapshot(nodeId, callback) {
+		CommandQueue.callSceneScriptWithTimeout(
+			"mcp-bridge",
+			"get-hierarchy",
+			{ nodeId, depth: 16, includeDetails: false },
+			callback,
+		);
+  }
+
+  static _updateComponentWithRetry(nodeId, componentType, properties, retries, callback) {
+		CommandQueue.callSceneScriptWithTimeout(
+			"mcp-bridge",
+			"manage-components",
+			{
+				nodeId,
+				action: "update",
+				componentType,
+				properties,
+			},
+			(err, result) => {
+				if (!err) {
+					return callback(null, result);
+				}
+				if (retries <= 0) {
+					return callback(err);
+				}
+				setTimeout(() => {
+					ToolDispatcher._updateComponentWithRetry(nodeId, componentType, properties, retries - 1, callback);
+				}, 1000);
+			},
+		);
+  }
+
   static _openPrefabForEditing(prefabPath, callback) {
 		const prefabUuid = Editor.assetdb.urlToUuid(prefabPath);
 		if (!prefabUuid) {
@@ -862,6 +1004,123 @@ export class ToolDispatcher {
 			});
 		});
 	}
+
+  static _generateAndAttachPrefabScript(prefabPath, rootSnapshot, options, callback) {
+		if (!prefabPath || !rootSnapshot) {
+			return callback(null, null);
+		}
+		const scaffoldSpec = buildPrefabScriptScaffoldSpec(prefabPath, rootSnapshot, {
+			dataInterfaceName: options && options.dataInterfaceName,
+		});
+		const scriptPath = scaffoldSpec.scriptPath;
+		const scriptExists = Editor.assetdb.exists(scriptPath);
+		const overwriteScript = !!(options && options.overwriteScript);
+		const continueAttach = (writeMessage) => {
+			ToolDispatcher._refreshAsset(scriptPath, (refreshErr) => {
+				if (refreshErr) {
+					return callback(refreshErr);
+				}
+				ToolDispatcher._delay(1500, () => {
+					ToolDispatcher._openPrefabForEditing(prefabPath, (openErr) => {
+						if (openErr) {
+							return callback(openErr);
+						}
+						CommandQueue.callSceneScriptWithTimeout(
+							"mcp-bridge",
+							"get-hierarchy",
+							{ depth: 16, includeDetails: false },
+							(hierarchyErr, hierarchy) => {
+								if (hierarchyErr) {
+									return callback(hierarchyErr);
+								}
+								const rootNode = ToolDispatcher._findNodeByName(
+									hierarchy,
+									(options && options.rootName) || rootSnapshot.name,
+								);
+								if (!rootNode) {
+									return callback(`在当前打开的预制体中找不到根节点: ${(options && options.rootName) || rootSnapshot.name}`);
+								}
+								const bindingResult = buildPrefabComponentBindings(scaffoldSpec, hierarchy);
+								const rootComponents = (rootNode.components || []).map((item) =>
+									String(item || "").replace(/^cc\./, ""),
+								);
+								const attachScriptComponent = rootComponents.includes(scaffoldSpec.className)
+									? ToolDispatcher._updateComponentWithRetry.bind(ToolDispatcher)
+									: ToolDispatcher._addComponentWithRetry.bind(ToolDispatcher);
+								attachScriptComponent(
+									rootNode.uuid,
+									scaffoldSpec.className,
+									bindingResult.properties,
+									5,
+									(componentErr, componentResult) => {
+										if (componentErr) {
+											return callback(componentErr);
+										}
+										const buttonEvents = bindingResult.buttonEvents || [];
+										const applyButtonEvents = (index) => {
+											if (index >= buttonEvents.length) {
+												return ToolDispatcher._saveAndCloseOpenPrefab((saveErr, saveResult) => {
+													if (saveErr) {
+														return callback(saveErr);
+													}
+													callback(null, {
+														scriptPath,
+														className: scaffoldSpec.className,
+														writeMessage,
+														scriptReused: scriptExists && !overwriteScript,
+														componentResult,
+														boundProperties: Object.keys(bindingResult.properties),
+														buttonEvents: buttonEvents.map((item) => item.handlerName),
+														saveResult,
+													});
+												});
+											}
+
+											const eventBinding = buttonEvents[index];
+											ToolDispatcher._updateComponentWithRetry(
+												eventBinding.nodeId,
+												"cc.Button",
+												{
+													clickEvents: [
+														{
+															target: rootNode.uuid,
+															component: scaffoldSpec.className,
+															handler: eventBinding.handlerName,
+														},
+													],
+												},
+												5,
+												(updateErr) => {
+													if (updateErr) {
+														return callback(updateErr);
+													}
+													applyButtonEvents(index + 1);
+												},
+											);
+										};
+
+										applyButtonEvents(0);
+									},
+								);
+							},
+						);
+					});
+				});
+			});
+		};
+
+		if (scriptExists && !overwriteScript) {
+			return continueAttach(`脚本已复用: ${scriptPath}`);
+		}
+
+		const scriptContent = buildPrefabComponentScript(scaffoldSpec);
+		ToolDispatcher._writeOrCreateAsset(scriptPath, scriptContent, overwriteScript, (writeErr, writeMessage) => {
+			if (writeErr) {
+				return callback(writeErr);
+			}
+			continueAttach(writeMessage);
+		});
+  }
 
   static scaffoldRepeatableUi(args, callback) {
 		let spec;
@@ -1013,6 +1272,19 @@ export class ToolDispatcher {
 		};
 	}
 
+  static _collectDesignVisualAssetPaths(node, collected = new Set()) {
+		if (!node) {
+			return collected;
+		}
+		if (node.visual && node.visual.assetPath) {
+			collected.add(node.visual.assetPath);
+		}
+		(node.children || []).forEach((child) => {
+			ToolDispatcher._collectDesignVisualAssetPaths(child, collected);
+		});
+		return collected;
+	}
+
   static importDesignLayout(args, callback) {
 		let spec;
 		try {
@@ -1042,6 +1314,7 @@ export class ToolDispatcher {
 				imageAssetMap: spec.imageAssetMap,
 				importGeneratedShapes: spec.importGeneratedShapes,
 			});
+			normalizedLayout = applyDesignLayoutLogic(normalizedLayout, spec.logic);
 		} catch (e) {
 			return callback(`读取设计 JSON 失败: ${e.message}`);
 		}
@@ -1081,18 +1354,31 @@ export class ToolDispatcher {
 						}
 					});
 
+					ToolDispatcher._collectDesignVisualAssetPaths(normalizedLayout.root).forEach((assetPathValue) => {
+						const assetPath = String(assetPathValue);
+						if (assetUuidMap[assetPath]) {
+							return;
+						}
+						const spriteFrameUuid = ToolDispatcher._resolveSpriteFrameUuid(assetPath);
+						if (spriteFrameUuid) {
+							assetUuidMap[assetPath] = spriteFrameUuid;
+						}
+					});
+
 					const continueImport = () => {
+						const uiPolicy = loadProjectUiPolicyForCurrentEditor();
 						const layoutWithUuids = ToolDispatcher._attachDesignSpriteFrameUuids(
 							normalizedLayout.root,
 							assetUuidMap,
 						);
+						const sanitizedLayout = ToolDispatcher._sanitizeImportedLayoutNames(layoutWithUuids, uiPolicy);
 						CommandQueue.callSceneScriptWithTimeout(
 							"mcp-bridge",
 							"import-design-layout",
 							{
 								spec,
-								layout: layoutWithUuids,
-								uiPolicy: loadProjectUiPolicyForCurrentEditor(),
+								layout: sanitizedLayout,
+								uiPolicy,
 							},
 							(err, importResult) => {
 								if (err) {
@@ -1110,17 +1396,36 @@ export class ToolDispatcher {
 											path: spec.prefabPath,
 											message: prefabMessage,
 										});
-										callback(null, {
-											ok: true,
-											prefabPath: spec.prefabPath,
-											jsonPath: jsonFsPath,
-											assetOutputDir: spec.assetOutputDir,
-											rootNodeName: normalizedLayout.root.name,
-											nodeCount: importResult.nodeCount,
-											assetCount: normalizedLayout.assetTasks.length,
-											analysis,
-											created,
-										});
+										const scriptSource = ToolDispatcher._buildDesignLayoutScriptSourceSnapshot(sanitizedLayout);
+										ToolDispatcher._generateAndAttachPrefabScript(
+											spec.prefabPath,
+											scriptSource,
+											{
+												rootName: sanitizedLayout.name,
+												dataInterfaceName: spec.logic && spec.logic.dataInterfaceName,
+												overwriteScript: false,
+											},
+											(scriptErr, scriptResult) => {
+												callback(null, {
+													ok: true,
+													prefabPath: spec.prefabPath,
+													jsonPath: jsonFsPath,
+													assetOutputDir: spec.assetOutputDir,
+													rootNodeName: sanitizedLayout.name,
+													nodeCount: importResult.nodeCount,
+													assetCount: normalizedLayout.assetTasks.length,
+													analysis,
+													created,
+													script: scriptErr
+														? {
+																ok: false,
+																error: String(scriptErr),
+																note: "Prefab 已生成，但脚本自动挂载失败。",
+														  }
+														: scriptResult,
+												});
+											},
+										);
 									},
 								);
 							},
@@ -1176,12 +1481,13 @@ export class ToolDispatcher {
 			});
 
 			const rawDocument = JSON.parse(fs.readFileSync(jsonFsPath, "utf8"));
-			const normalizedLayout = normalizeDesignLayoutDocument(rawDocument, {
+			let normalizedLayout = normalizeDesignLayoutDocument(rawDocument, {
 				assetOutputDir: spec.assetOutputDir,
 				imageAssetPaths,
 				imageAssetMap: spec.imageAssetMap,
 				importGeneratedShapes: spec.importGeneratedShapes,
 			});
+			normalizedLayout = applyDesignLayoutLogic(normalizedLayout, spec.logic);
 			const analysis = analyzeNormalizedDesignLayout(normalizedLayout);
 
 			callback(null, {
@@ -1533,6 +1839,10 @@ export default class NewScript extends cc.Component {
 				const targetDir = prefabPath.substring(0, prefabPath.lastIndexOf("/"));
 				const fileName = prefabPath.substring(prefabPath.lastIndexOf("/") + 1);
 				const prefabName = fileName.replace(".prefab", "");
+				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
+				if (!ToolDispatcher._validateNodeNameWithPolicyOrReply(uiPolicy, prefabName, callback)) {
+					return;
+				}
 
 				// 1. 重命名节点以匹配预制体名称
 				Editor.Ipc.sendToPanel("scene", "scene:set-property", {
@@ -1543,7 +1853,6 @@ export default class NewScript extends cc.Component {
 					isSubProp: false,
 				});
 
-				const uiPolicy = loadProjectUiPolicyForCurrentEditor();
 				// 2.【修复】使用自定义序列化替代内置 scene:create-prefab，避免根节点 PrefabInfo 损坏
 				// _createPrefabViaSceneScript 内部调用 Editor.assetdb.create()，
 				// 前置通过 _ensureParentDir 等待真实目录建立完备

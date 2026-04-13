@@ -12,6 +12,29 @@ export interface DesignImportInput {
 	importGeneratedShapes?: boolean;
 	strictImageAssets?: boolean;
 	overwrite?: boolean;
+	logic?: DesignLayoutLogicSpec;
+}
+
+export interface DesignNodeBindingSpec {
+	propertyName?: string;
+	dataKey?: string;
+	group?: string;
+}
+
+export interface DesignLayoutLogicRule {
+	matchId?: string;
+	matchName?: string;
+	name?: string;
+	path?: string;
+	propertyName?: string;
+	dataKey?: string;
+	group?: string;
+}
+
+export interface DesignLayoutLogicSpec {
+	rootName?: string;
+	dataInterfaceName?: string;
+	rules?: DesignLayoutLogicRule[];
 }
 
 export interface DesignImportSpec {
@@ -26,6 +49,7 @@ export interface DesignImportSpec {
 	importGeneratedShapes: boolean;
 	strictImageAssets: boolean;
 	overwrite: boolean;
+	logic: DesignLayoutLogicSpec | null;
 }
 
 export interface NormalizedDesignTextSpec {
@@ -66,6 +90,7 @@ export interface NormalizedDesignNode {
 	isButton: boolean;
 	text: NormalizedDesignTextSpec | null;
 	visual: NormalizedDesignVisualSpec | null;
+	binding?: DesignNodeBindingSpec | null;
 	children: NormalizedDesignNode[];
 }
 
@@ -147,6 +172,57 @@ function sanitizeStem(input: string): string {
 	return cleaned || "asset";
 }
 
+function splitLogicPath(input: string | undefined): string[] {
+	return String(input || "")
+		.split("/")
+		.map((item) => String(item || "").trim())
+		.filter(Boolean);
+}
+
+function normalizeLogicRule(rule: DesignLayoutLogicRule | null | undefined): DesignLayoutLogicRule | null {
+	if (!rule) {
+		return null;
+	}
+	const matchId = String(rule.matchId || "").trim() || undefined;
+	const matchName = String(rule.matchName || "").trim() || undefined;
+	if (!matchId && !matchName) {
+		return null;
+	}
+	const name = String(rule.name || "").trim() || undefined;
+	const path = splitLogicPath(rule.path).join("/") || undefined;
+	const propertyName = String(rule.propertyName || "").trim() || undefined;
+	const dataKey = String(rule.dataKey || "").trim() || undefined;
+	const group = String(rule.group || "").trim() || undefined;
+	return {
+		matchId,
+		matchName,
+		name,
+		path,
+		propertyName,
+		dataKey,
+		group,
+	};
+}
+
+function normalizeLogicSpec(input: DesignLayoutLogicSpec | null | undefined): DesignLayoutLogicSpec | null {
+	if (!input) {
+		return null;
+	}
+	const rootName = String(input.rootName || "").trim() || undefined;
+	const dataInterfaceName = String(input.dataInterfaceName || "").trim() || undefined;
+	const rules = (Array.isArray(input.rules) ? input.rules : [])
+		.map((rule) => normalizeLogicRule(rule))
+		.filter((rule): rule is DesignLayoutLogicRule => !!rule);
+	if (!rootName && !dataInterfaceName && rules.length === 0) {
+		return null;
+	}
+	return {
+		rootName,
+		dataInterfaceName,
+		rules,
+	};
+}
+
 function normalizeColor(input: any, fallbackAlpha = 1) {
 	if (!input) {
 		return null;
@@ -225,17 +301,17 @@ function buildTextSpec(node: any): NormalizedDesignTextSpec | null {
 		color: normalizeColor(font.color, 1) || { r: 255, g: 255, b: 255, a: 255 },
 		outline: stroke
 			? {
-					width: Math.max(1, Math.round(Number(stroke.width) || 1)),
-					color: normalizeColor(stroke.color, 1) || { r: 0, g: 0, b: 0, a: 255 },
-			  }
+				width: Math.max(1, Math.round(Number(stroke.width) || 1)),
+				color: normalizeColor(stroke.color, 1) || { r: 0, g: 0, b: 0, a: 255 },
+			}
 			: null,
 		shadow: shadow
 			? {
-					offsetX: Math.round(Number(shadow.offsetX) || 0),
-					offsetY: Math.round(Number(shadow.offsetY) || 0),
-					blur: Math.max(0, Math.round(Number(shadow.blur) || 0)),
-					color: normalizeColor(shadow.color, 1) || { r: 0, g: 0, b: 0, a: 255 },
-			  }
+				offsetX: Math.round(Number(shadow.offsetX) || 0),
+				offsetY: Math.round(Number(shadow.offsetY) || 0),
+				blur: Math.max(0, Math.round(Number(shadow.blur) || 0)),
+				color: normalizeColor(shadow.color, 1) || { r: 0, g: 0, b: 0, a: 255 },
+			}
 			: null,
 	};
 }
@@ -346,13 +422,13 @@ function normalizeNodeTree(
 	const style = node?.style || {};
 	const position = parentFrame
 		? {
-				x: roundNumber(
-					effectiveFrame.x - parentFrame.x + effectiveFrame.width / 2 - parentFrame.width / 2,
-				),
-				y: roundNumber(
-					parentFrame.y - effectiveFrame.y - effectiveFrame.height / 2 + parentFrame.height / 2,
-				),
-		  }
+			x: roundNumber(
+				effectiveFrame.x - parentFrame.x + effectiveFrame.width / 2 - parentFrame.width / 2,
+			),
+			y: roundNumber(
+				parentFrame.y - effectiveFrame.y - effectiveFrame.height / 2 + parentFrame.height / 2,
+			),
+		}
 		: { x: 0, y: 0 };
 
 	return {
@@ -367,6 +443,7 @@ function normalizeNodeTree(
 		isButton: looksLikeButton(node?.name),
 		text: buildTextSpec(node),
 		visual: createNodeVisual(node, options),
+		binding: null,
 		children: (Array.isArray(node?.children) ? node.children : []).map((child) =>
 			normalizeNodeTree(child, effectiveFrame, options, tasks, seenPaths),
 		),
@@ -397,6 +474,7 @@ export function normalizeDesignImportArgs(input: DesignImportInput): DesignImpor
 		importGeneratedShapes: false,
 		strictImageAssets: true,
 		overwrite: !!input.overwrite,
+		logic: normalizeLogicSpec(input.logic),
 	};
 }
 
@@ -430,6 +508,139 @@ export function normalizeDesignLayoutDocument(
 	return {
 		root,
 		assetTasks,
+	};
+}
+
+function cloneDesignNode(node: NormalizedDesignNode): NormalizedDesignNode {
+	return {
+		...node,
+		position: { ...node.position },
+		size: { ...node.size },
+		text: node.text
+			? {
+				...node.text,
+				color: { ...node.text.color },
+				outline: node.text.outline
+					? {
+						...node.text.outline,
+						color: { ...node.text.outline.color },
+					}
+					: null,
+				shadow: node.text.shadow
+					? {
+						...node.text.shadow,
+						color: { ...node.text.shadow.color },
+					}
+					: null,
+			}
+			: null,
+		visual: node.visual ? { ...node.visual } : null,
+		binding: node.binding ? { ...node.binding } : null,
+		children: (node.children || []).map((child) => cloneDesignNode(child)),
+	};
+}
+
+function createLogicalGroupNode(name: string, referenceNode: NormalizedDesignNode): NormalizedDesignNode {
+	return {
+		id: `logic:${name}`,
+		name,
+		nodeType: "container",
+		position: { x: 0, y: 0 },
+		size: { ...referenceNode.size },
+		opacity: 255,
+		rotation: 0,
+		visible: true,
+		isButton: false,
+		text: null,
+		visual: null,
+		binding: null,
+		children: [],
+	};
+}
+
+function findRuleTarget(
+	root: NormalizedDesignNode,
+	rule: DesignLayoutLogicRule,
+	parent: NormalizedDesignNode | null = null,
+): { node: NormalizedDesignNode; parent: NormalizedDesignNode | null } | null {
+	if (!root) {
+		return null;
+	}
+	if ((rule.matchId && root.id === rule.matchId) || (rule.matchName && root.name === rule.matchName)) {
+		return { node: root, parent };
+	}
+	for (const child of root.children || []) {
+		const found = findRuleTarget(child, rule, root);
+		if (found) {
+			return found;
+		}
+	}
+	return null;
+}
+
+function ensureLogicalPath(root: NormalizedDesignNode, pathSegments: string[]): NormalizedDesignNode {
+	let current = root;
+	pathSegments.forEach((segment) => {
+		let next = (current.children || []).find(
+			(child) => child.nodeType === "container" && child.name === segment,
+		);
+		if (!next) {
+			next = createLogicalGroupNode(segment, root);
+			current.children.push(next);
+		}
+		current = next;
+	});
+	return current;
+}
+
+export function applyDesignLayoutLogic(
+	layout: NormalizedDesignLayoutDocument,
+	logicInput?: DesignLayoutLogicSpec | null,
+): NormalizedDesignLayoutDocument {
+	const logic = normalizeLogicSpec(logicInput);
+	if (!logic) {
+		return {
+			root: cloneDesignNode(layout.root),
+			assetTasks: Array.isArray(layout.assetTasks) ? layout.assetTasks.slice() : [],
+		};
+	}
+
+	const root = cloneDesignNode(layout.root);
+	if (logic.rootName) {
+		root.name = logic.rootName;
+	}
+
+	(logic.rules || []).forEach((rule) => {
+		const found = findRuleTarget(root, rule);
+		if (!found || !found.node) {
+			return;
+		}
+		const targetNode = found.node;
+		if (rule.name) {
+			targetNode.name = rule.name;
+		}
+		if (rule.propertyName || rule.dataKey || rule.group) {
+			targetNode.binding = {
+				propertyName: rule.propertyName,
+				dataKey: rule.dataKey,
+				group: rule.group,
+			};
+		}
+		if (!rule.path || !found.parent || found.parent === root && splitLogicPath(rule.path).length === 0) {
+			return;
+		}
+		const pathSegments = splitLogicPath(rule.path);
+		if (pathSegments.length === 0) {
+			return;
+		}
+		found.parent.children = (found.parent.children || []).filter((child) => child !== targetNode);
+		const nextParent = ensureLogicalPath(root, pathSegments);
+		nextParent.children.push(targetNode);
+	});
+
+	return {
+		root,
+		assetTasks: Array.isArray(layout.assetTasks) ? layout.assetTasks.slice() : [],
 	};
 }
 

@@ -3,6 +3,7 @@
 import { resolveCreateNodePolicy, resolveNamedUiPreset, resolvePrefabRootPolicy } from "./utils/UiPolicy";
 import { validateUiTree } from "./utils/UiPolicyValidation";
 import { resolvePreferredSpriteSizeMode } from "./utils/AutoNineSlice";
+import { resolveSerializedPrefabSubtree } from "./utils/PrefabSerialization";
 
 /**
  * 更加健壮的节点查找函数，支持解压后的 UUID
@@ -220,8 +221,11 @@ const applyPreferredSpriteSizeMode = (sprite, uiPolicy, uuid) => {
         (metaInfo && metaInfo.textureName) || "",
         metaInfo && metaInfo.subMeta,
     );
-    sprite.sizeMode =
-        preferredMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
+    const isCustom = preferredMode === "CUSTOM";
+    sprite.sizeMode = isCustom ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
+    sprite.type = isCustom ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
+    // sprite.width = 100;
+    // sprite.height = 100;
 };
 
 const applyResolvedUiPolicyToNode = (node, resolvedPolicy) => {
@@ -242,6 +246,13 @@ const applyResolvedUiPolicyToNode = (node, resolvedPolicy) => {
     }
 };
 
+const applyDefaultLabelPolicy = (label) => {
+    if (!label || !cc || !cc.Label) {
+        return;
+    }
+    label.overflow = cc.Label.Overflow.NONE;
+};
+
 const captureUiState = (node) => {
     const widget = node.getComponent(cc.Widget);
     const safeArea = node.getComponent(cc.SafeArea);
@@ -251,28 +262,28 @@ const captureUiState = (node) => {
         hadWidget: !!widget,
         widget: widget
             ? {
-                  enabled: widget.enabled,
-                  target: widget.target,
-                  alignMode: widget.alignMode,
-                  isAlignTop: widget.isAlignTop,
-                  isAlignBottom: widget.isAlignBottom,
-                  isAlignLeft: widget.isAlignLeft,
-                  isAlignRight: widget.isAlignRight,
-                  isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
-                  isAlignVerticalCenter: widget.isAlignVerticalCenter,
-                  top: widget.top,
-                  bottom: widget.bottom,
-                  left: widget.left,
-                  right: widget.right,
-                  horizontalCenter: widget.horizontalCenter,
-                  verticalCenter: widget.verticalCenter,
-                  isAbsoluteTop: widget.isAbsoluteTop,
-                  isAbsoluteBottom: widget.isAbsoluteBottom,
-                  isAbsoluteLeft: widget.isAbsoluteLeft,
-                  isAbsoluteRight: widget.isAbsoluteRight,
-                  isAbsoluteHorizontalCenter: widget.isAbsoluteHorizontalCenter,
-                  isAbsoluteVerticalCenter: widget.isAbsoluteVerticalCenter,
-              }
+                enabled: widget.enabled,
+                target: widget.target,
+                alignMode: widget.alignMode,
+                isAlignTop: widget.isAlignTop,
+                isAlignBottom: widget.isAlignBottom,
+                isAlignLeft: widget.isAlignLeft,
+                isAlignRight: widget.isAlignRight,
+                isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
+                isAlignVerticalCenter: widget.isAlignVerticalCenter,
+                top: widget.top,
+                bottom: widget.bottom,
+                left: widget.left,
+                right: widget.right,
+                horizontalCenter: widget.horizontalCenter,
+                verticalCenter: widget.verticalCenter,
+                isAbsoluteTop: widget.isAbsoluteTop,
+                isAbsoluteBottom: widget.isAbsoluteBottom,
+                isAbsoluteLeft: widget.isAbsoluteLeft,
+                isAbsoluteRight: widget.isAbsoluteRight,
+                isAbsoluteHorizontalCenter: widget.isAbsoluteHorizontalCenter,
+                isAbsoluteVerticalCenter: widget.isAbsoluteVerticalCenter,
+            }
             : null,
         hadSafeArea: !!safeArea,
         safeAreaEnabled: safeArea ? safeArea.enabled : false,
@@ -348,13 +359,13 @@ const snapshotNodeForValidation = (node) => {
         hasSafeArea: !!safeArea,
         widget: widget
             ? {
-                  isAlignTop: widget.isAlignTop,
-                  isAlignBottom: widget.isAlignBottom,
-                  isAlignLeft: widget.isAlignLeft,
-                  isAlignRight: widget.isAlignRight,
-                  isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
-                  isAlignVerticalCenter: widget.isAlignVerticalCenter,
-              }
+                isAlignTop: widget.isAlignTop,
+                isAlignBottom: widget.isAlignBottom,
+                isAlignLeft: widget.isAlignLeft,
+                isAlignRight: widget.isAlignRight,
+                isAlignHorizontalCenter: widget.isAlignHorizontalCenter,
+                isAlignVerticalCenter: widget.isAlignVerticalCenter,
+            }
             : null,
         children: node.children.map((child) => snapshotNodeForValidation(child)),
     };
@@ -380,68 +391,39 @@ const serializeNodeToPrefabJson = (node, options) => {
         canvasDesignResolution: getCanvasDesignResolution(scene, options && options.uiPolicy),
     });
     const nodeUiSnapshot = resolvedPrefabRootPolicy.shouldApply ? captureUiState(node) : null;
+    const originalNodeName = node.name;
+    const serializeRootMarker = `__MCP_SERIALIZE_ROOT__${Date.now()}__`;
 
     try {
         if (resolvedPrefabRootPolicy.shouldApply) {
             applyResolvedUiPolicyToNode(node, resolvedPrefabRootPolicy);
         }
 
+        node.name = serializeRootMarker;
         const serializedStr = Editor.serialize(node);
-        const sceneData = JSON.parse(serializedStr);
-
-        if (!Array.isArray(sceneData) || sceneData.length === 0) {
-            throw new Error("序列化数据格式异常");
-        }
-
-        let sceneIndex = -1;
-        for (let i = 0; i < sceneData.length; i++) {
-            if (sceneData[i].__type__ === "cc.Scene") {
-                sceneIndex = i;
-                break;
+        const nodeData = JSON.parse(serializedStr);
+        const sceneSerializedStr = scene ? Editor.serialize(scene) : null;
+        const sceneData = sceneSerializedStr ? JSON.parse(sceneSerializedStr) : null;
+        const subtree = resolveSerializedPrefabSubtree(nodeData, sceneData, serializeRootMarker);
+        const orderedIndices = subtree.orderedIndices;
+        const oldToNewIndex = {};
+        const filteredData: any[] = orderedIndices.map((oldIndex, position) => {
+            oldToNewIndex[oldIndex] = position + 1;
+            const sourceData = subtree.usedFallback ? sceneData : nodeData;
+            const cloned = JSON.parse(JSON.stringify(sourceData[oldIndex]));
+            if (cloned && cloned.__type__ === "cc.Node") {
+                cloned._prefab = null;
             }
-        }
+            return cloned;
+        });
 
-        let filteredData: any[] = [];
-        let oldToNewIndex: any = {};
-        let newIndex = 1;
-
-        for (let i = 0; i < sceneData.length; i++) {
-            if (i === sceneIndex) {
-                oldToNewIndex[i] = -1;
-                continue;
-            }
-            oldToNewIndex[i] = newIndex;
-            filteredData.push(sceneData[i]);
-            newIndex++;
-        }
-
-        let rootNodeOldIndex = -1;
-        for (let i = 0; i < sceneData.length; i++) {
-            if (i === sceneIndex) continue;
-            if (sceneData[i].__type__ === "cc.Node") {
-                if (sceneData[i]._parent && sceneData[i]._parent.__id__ === sceneIndex) {
-                    rootNodeOldIndex = i;
-                    break;
-                }
-            }
-        }
-        if (rootNodeOldIndex === -1) {
-            for (let i = 0; i < sceneData.length; i++) {
-                if (i === sceneIndex) continue;
-                if (sceneData[i].__type__ === "cc.Node") {
-                    rootNodeOldIndex = i;
-                    break;
-                }
-            }
-        }
-
-        const rootNodeNewIndex = oldToNewIndex[rootNodeOldIndex];
-        let nodeEntries: any[] = [];
+        const rootNodeNewIndex = 1;
+        const nodeEntries: any[] = [];
         for (let i = 0; i < filteredData.length; i++) {
             if (filteredData[i].__type__ === "cc.Node") {
                 nodeEntries.push({
                     arrayIndex: i + 1,
-                    isRoot: i + 1 === rootNodeNewIndex,
+                    isRoot: i === 0,
                 });
             }
         }
@@ -463,10 +445,10 @@ const serializeNodeToPrefabJson = (node, options) => {
             prefabData.push(filteredData[i]);
         }
 
-        const updateRefs = (obj) => {
+        const updateRefs = (obj, parentKey = "") => {
             if (obj === null || obj === undefined || typeof obj !== "object") return;
             if (Array.isArray(obj)) {
-                obj.forEach((item) => updateRefs(item));
+                obj.forEach((item) => updateRefs(item, parentKey));
                 return;
             }
             for (let key in obj) {
@@ -475,9 +457,11 @@ const serializeNodeToPrefabJson = (node, options) => {
                     const oldIdx = obj[key];
                     if (oldToNewIndex.hasOwnProperty(oldIdx)) {
                         obj[key] = oldToNewIndex[oldIdx];
+                    } else if (parentKey === "_parent" || parentKey === "_prefab") {
+                        obj.__id__ = -1;
                     }
                 } else if (typeof obj[key] === "object" && obj[key] !== null) {
-                    updateRefs(obj[key]);
+                    updateRefs(obj[key], key);
                 }
             }
         };
@@ -488,6 +472,7 @@ const serializeNodeToPrefabJson = (node, options) => {
 
         let rootNodeObj = prefabData[rootNodeNewIndex];
         if (rootNodeObj) {
+            rootNodeObj._name = originalNodeName;
             rootNodeObj._parent = null;
         }
 
@@ -518,6 +503,7 @@ const serializeNodeToPrefabJson = (node, options) => {
 
         return JSON.stringify(prefabData, null, 2);
     } finally {
+        node.name = originalNodeName;
         if (nodeUiSnapshot) {
             restoreUiState(node, nodeUiSnapshot);
         }
@@ -561,6 +547,7 @@ const createRepeatableFieldNode = (field) => {
 
     const label = fieldNode.addComponent(cc.Label);
     label.string = field.placeholder || field.name;
+    applyDefaultLabelPolicy(label);
     fieldNode.width = field.width || 160;
     fieldNode.height = field.height || 40;
     return fieldNode;
@@ -641,13 +628,13 @@ const applyDesignTextStyle = (node, textSpec) => {
     label.useSystemFont = true;
     label.fontFamily = textSpec.fontFamily || "Arial";
     label.enableWrapText = true;
-    label.overflow = cc.Label.Overflow.CLAMP;
+    applyDefaultLabelPolicy(label);
     label.horizontalAlign =
         textSpec.horizontalAlign === "RIGHT"
             ? cc.Label.HorizontalAlign.RIGHT
             : textSpec.horizontalAlign === "CENTER"
-              ? cc.Label.HorizontalAlign.CENTER
-              : cc.Label.HorizontalAlign.LEFT;
+                ? cc.Label.HorizontalAlign.CENTER
+                : cc.Label.HorizontalAlign.LEFT;
     label.verticalAlign = cc.Label.VerticalAlign.CENTER;
 
     if (textSpec.color) {
@@ -1027,6 +1014,7 @@ export = {
             newNode = new cc.Node(name || "新建文本节点");
             let l = newNode.addComponent(cc.Label);
             l.string = "新文本";
+            applyDefaultLabelPolicy(l);
             newNode.width = 120;
             newNode.height = 40;
         } else {
@@ -1318,26 +1306,26 @@ export = {
                                         );
                                     }
 
-                                        if (loadedCount === uuids.length) {
-                                            if (isAssetArray) {
-                                                // 过滤掉加载失败的
-                                                component[key] = loadedAssets.filter((a) => !!a);
-                                            } else {
-                                                if (loadedAssets[0]) component[key] = loadedAssets[0];
-                                                if (
-                                                    component instanceof cc.Sprite &&
-                                                    key === "spriteFrame" &&
-                                                    autoNineSliceCandidateUuids.length > 0
-                                                ) {
-                                                    applyPreferredSpriteSizeMode(
-                                                        component,
-                                                        args.uiPolicy,
-                                                        autoNineSliceCandidateUuids[0],
-                                                    );
-                                                }
+                                    if (loadedCount === uuids.length) {
+                                        if (isAssetArray) {
+                                            // 过滤掉加载失败的
+                                            component[key] = loadedAssets.filter((a) => !!a);
+                                        } else {
+                                            if (loadedAssets[0]) component[key] = loadedAssets[0];
+                                            if (
+                                                component instanceof cc.Sprite &&
+                                                key === "spriteFrame" &&
+                                                autoNineSliceCandidateUuids.length > 0
+                                            ) {
+                                                applyPreferredSpriteSizeMode(
+                                                    component,
+                                                    args.uiPolicy,
+                                                    autoNineSliceCandidateUuids[0],
+                                                );
                                             }
+                                        }
 
-                                            // 通知编辑器 UI 更新
+                                        // 通知编辑器 UI 更新
                                         const compIndex = node._components.indexOf(component);
                                         if (compIndex !== -1) {
                                             Editor.Ipc.sendToPanel("scene", "scene:set-property", {

@@ -76,11 +76,7 @@ export function loadProjectUiWorkflowForCurrentEditor(): string {
 export function getUiPolicySummary(policyInput?: Partial<UiPolicyConfig> | null): string {
 	const policy = normalizeUiPolicy(policyInput || getDefaultUiPolicy());
 	const presetNames = Object.keys(policy.presets);
-	if (presetNames.length === 0) {
-		return "";
-	}
-
-	return presetNames
+	const presetSummary = presetNames
 		.map((presetName) => {
 			const preset = policy.presets[presetName];
 			const layoutText = preset.layout ? `layout=${preset.layout}` : "layout=inherit";
@@ -91,4 +87,8 @@ export function getUiPolicySummary(policyInput?: Partial<UiPolicyConfig> | null)
 			return `${presetName} [${layoutText}, ${anchorText}, ${safeAreaText}]`;
 		})
 		.join("; ");
+	const namingSummary =
+		policy.nodeNaming && policy.nodeNaming.englishOnly ? "nodeNaming=english-only" : "";
+
+	return [presetSummary, namingSummary].filter(Boolean).join("; ");
 }

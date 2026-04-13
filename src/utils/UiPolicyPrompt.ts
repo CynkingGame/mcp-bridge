@@ -19,9 +19,17 @@ export function buildUiPolicyWorkflowGuide(policyInput?: Partial<UiPolicyConfig>
 	const presetText = presetNames.length > 0 ? presetNames.join("、") : "无";
 	const autoNineSlice = normalizeAutoNineSlicePolicy(policy);
 	const repeatableUi = policy.repeatableUi;
+	const nodeNamingText =
+		policy.nodeNaming && policy.nodeNaming.englishOnly
+			? "场景和预制体中的节点名称只能使用英文，且仅允许字母、数字、空格、下划线和连字符。"
+			: "节点名称遵循项目约定。";
 	const autoNineSliceRuleText =
 		autoNineSlice.enabled && autoNineSlice.rules.length > 0
-			? autoNineSlice.rules.map((rule) => `${rule.pattern} -> [${rule.border.join(", ")}]`).join("；")
+			? `名称包含 点9 时自动按短边一半取整；额外规则仅作兼容补充：${autoNineSlice.rules
+					.map((rule) => `${rule.pattern} -> [${rule.border.join(", ")}]`)
+					.join("；")}`
+			: autoNineSlice.enabled
+				? "名称包含 点9 时自动按短边一半取整"
 			: "未启用";
 
 	return [
@@ -30,8 +38,10 @@ export function buildUiPolicyWorkflowGuide(policyInput?: Partial<UiPolicyConfig>
 		"## 核心原则",
 		"- 创建 UI 节点时优先使用 `uiPreset` 或 `layout`，不要先手写坐标。",
 		"- 创建全屏 UI 预制体时优先使用 `rootPreset`，不要依赖手工补 Widget。",
+		`- ${nodeNamingText}`,
+		"- `Label` 组件的 `overflow` 默认保持 `NONE`，不要默认改成 `CLAMP`/`RESIZE_HEIGHT`。",
 		"- 修改已有 prefab 后，先调用 `apply_ui_policy`，再调用 `validate_ui_prefab` 自检。",
-		"- 使用名字包含 `点9` 的纹理时，优先复用项目 `autoNineSlice` 规则；已存在节点可用 `ensure_current_9slice_textures` 兜底扫描。",
+		"- 使用名字包含 `点9` 的纹理时，直接按纹理短边的一半向下取整生成四边 Border；已存在节点可用 `ensure_current_9slice_textures` 兜底扫描。",
 		`- 当同结构 UI 重复达到 ${repeatableUi.reuseThreshold} 个及以上时，优先抽成独立 Item prefab，并通过脚本参数化生成。`,
 		"- 当设计师提供结构化设计 JSON 时，优先使用 `import_design_layout`，不要退回到逐个 `create_node` 手工搭界面。",
 		"- 设计稿导入时先调用 `analyze_design_layout` 做只读分析，再由 AI 明确决定执行参数。",
@@ -46,9 +56,10 @@ export function buildUiPolicyWorkflowGuide(policyInput?: Partial<UiPolicyConfig>
 		"4. 根据分析结果补齐 `imageAssetMap` 并确认 `rootPreset`；不要为纯色块或圆角块安排自动生成贴图。",
 		"5. 再调用 `import_design_layout` 正式导入；不要尝试把 JSON 图片导出到项目。",
 		"6. 需要创建全屏根节点 prefab 时，使用 `create_prefab` 或 `prefab_management.create`，并传 `rootPreset`。",
-		"7. 使用 `点9` 纹理后，必要时调用 `ensure_current_9slice_textures` 自动补齐缺失的 9-slice 边距。",
-		"8. 对已存在节点使用 `apply_ui_policy` 修正规范。",
-		"9. 结束前使用 `validate_ui_prefab` 校验。",
+		"7. 生成 prefab 后，默认同步生成并挂载同名脚本；脚本中要为动态数据和交互组件生成 `@property` 与绑定代码。",
+		"8. 使用 `点9` 纹理后，必要时调用 `ensure_current_9slice_textures` 自动补齐缺失的 9-slice 边距。",
+		"9. 对已存在节点使用 `apply_ui_policy` 修正规范。",
+		"10. 结束前使用 `validate_ui_prefab` 校验。",
 		"",
 		"## 当前项目预设",
 		`- ${presetText}`,
