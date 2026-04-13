@@ -3,6 +3,7 @@
 import { resolveCreateNodePolicy, resolveNamedUiPreset, resolvePrefabRootPolicy } from "./utils/UiPolicy";
 import { validateUiTree } from "./utils/UiPolicyValidation";
 import { resolvePreferredSpriteSizeMode } from "./utils/AutoNineSlice";
+import { preserveImportedSpriteNodeSize, resolveImportedSpritePreferredMode } from "./utils/ImportedDesignSprite";
 import { resolveSerializedPrefabSubtree } from "./utils/PrefabSerialization";
 
 /**
@@ -211,21 +212,70 @@ const readSpriteAssetMetaInfo = (uuid) => {
     }
 };
 
-const applyPreferredSpriteSizeMode = (sprite, uiPolicy, uuid) => {
+const resolveSpriteSizeModeName = (sizeMode) => {
+    if (!cc || !cc.Sprite || !cc.Sprite.SizeMode) {
+        return "UNKNOWN";
+    }
+    if (sizeMode === cc.Sprite.SizeMode.CUSTOM) {
+        return "CUSTOM";
+    }
+    if (sizeMode === cc.Sprite.SizeMode.RAW) {
+        return "RAW";
+    }
+    return "TRIMMED";
+};
+
+const resolveSpriteTypeName = (type) => {
+    if (!cc || !cc.Sprite || !cc.Sprite.Type) {
+        return "UNKNOWN";
+    }
+    if (type === cc.Sprite.Type.SLICED) {
+        return "SLICED";
+    }
+    if (type === cc.Sprite.Type.SIMPLE) {
+        return "SIMPLE";
+    }
+    return String(type);
+};
+
+const captureImportedNodeSize = (node) => ({
+    width: Math.round(Number(node && node.width) || 0),
+    height: Math.round(Number(node && node.height) || 0),
+});
+
+const hasValidImportedDesignSize = (size) =>
+    !!size &&
+    Number.isFinite(Number(size.width)) &&
+    Number(size.width) > 0 &&
+    Number.isFinite(Number(size.height)) &&
+    Number(size.height) > 0;
+
+const applyPreferredSpriteSizeMode = (sprite, uiPolicy, uuid, preferredModeHint) => {
     if (!sprite || !cc || !cc.Sprite || !cc.Sprite.SizeMode) {
-        return;
+        return {
+            textureName: "",
+            detectedPreferredMode: "RAW",
+            appliedPreferredMode: preferredModeHint === "CUSTOM" ? "CUSTOM" : "RAW",
+        };
     }
     const metaInfo = readSpriteAssetMetaInfo(uuid);
-    const preferredMode = resolvePreferredSpriteSizeMode(
+    const detectedPreferredMode = resolvePreferredSpriteSizeMode(
         uiPolicy,
         (metaInfo && metaInfo.textureName) || "",
         metaInfo && metaInfo.subMeta,
     );
+    const preferredMode = resolveImportedSpritePreferredMode(
+        preferredModeHint ? { preferredSizeMode: preferredModeHint } : null,
+        detectedPreferredMode,
+    );
     const isCustom = preferredMode === "CUSTOM";
     sprite.sizeMode = isCustom ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
     sprite.type = isCustom ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
-    // sprite.width = 100;
-    // sprite.height = 100;
+    return {
+        textureName: (metaInfo && metaInfo.textureName) || "",
+        detectedPreferredMode,
+        appliedPreferredMode: preferredMode,
+    };
 };
 
 const applyResolvedUiPolicyToNode = (node, resolvedPolicy) => {
@@ -670,10 +720,76 @@ const applyDesignTextStyle = (node, textSpec) => {
     }
 };
 
-const enqueueDesignSpriteLoad = (node, visual, pendingLoads) => {
+const joinImportedDesignPath = (pathSegments, nodeName) => [...(pathSegments || []), nodeName || "DesignNode"].join(" / ");
+
+const reconcileImportedDesignNodeSize = (node, spec, importDiagnostics, pathSegments) => {
+    if (!node || !spec) {
+        return;
+    }
+
+    const visual = spec.visual || null;
+    const path = joinImportedDesignPath(pathSegments, spec.name);
+    const beforeSize = captureImportedNodeSize(node);
+    const sprite = node.getComponent && node.getComponent(cc.Sprite);
+    const beforeMode = sprite ? resolveSpriteSizeModeName(sprite.sizeMode) : null;
+    const beforeType = sprite ? resolveSpriteTypeName(sprite.type) : null;
+    const finalPreferredMode = resolveImportedSpritePreferredMode(visual, beforeMode);
+
+    if (visual && finalPreferredMode === "CUSTOM" && hasValidImportedDesignSize(spec.size)) {
+        if (sprite) {
+            sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            sprite.type = cc.Sprite.Type.SLICED;
+        }
+        preserveImportedSpriteNodeSize(node, visual, spec.size, finalPreferredMode);
+        const afterSize = captureImportedNodeSize(node);
+        const afterMode = sprite ? resolveSpriteSizeModeName(sprite.sizeMode) : null;
+        const afterType = sprite ? resolveSpriteTypeName(sprite.type) : null;
+        importDiagnostics.push({
+            phase: "finalize",
+            path,
+            assetPath: visual.assetPath || null,
+            spriteFrameUuid: visual.spriteFrameUuid || null,
+            designSize: {
+                width: Number(spec.size.width),
+                height: Number(spec.size.height),
+            },
+            finalPreferredMode,
+            nodeSizeBefore: beforeSize,
+            nodeSizeAfter: afterSize,
+            spriteModeBefore: beforeMode,
+            spriteModeAfter: afterMode,
+            spriteTypeBefore: beforeType,
+            spriteTypeAfter: afterType,
+        });
+    }
+
+    const childNodes = node.children || [];
+    const childSpecs = spec.children || [];
+    const childCount = Math.max(childNodes.length, childSpecs.length);
+    for (let index = 0; index < childCount; index++) {
+        const childNode = childNodes[index];
+        const childSpec = childSpecs[index];
+        if (!childNode || !childSpec) {
+            importDiagnostics.push({
+                phase: "tree-mismatch",
+                path,
+                childIndex: index,
+                hasNode: !!childNode,
+                hasSpec: !!childSpec,
+            });
+            continue;
+        }
+        reconcileImportedDesignNodeSize(childNode, childSpec, importDiagnostics, [...(pathSegments || []), spec.name]);
+    }
+};
+
+const enqueueDesignSpriteLoad = (node, spec, pendingLoads, uiPolicy, importDiagnostics, pathSegments) => {
+    const visual = spec && spec.visual;
     if (!visual || !visual.spriteFrameUuid) {
         return;
     }
+    const designSize = spec && spec.size;
+    const path = joinImportedDesignPath(pathSegments, spec.name);
 
     const sprite = node.getComponent(cc.Sprite) || node.addComponent(cc.Sprite);
     sprite.sizeMode =
@@ -682,15 +798,60 @@ const enqueueDesignSpriteLoad = (node, visual, pendingLoads) => {
 
     pendingLoads.push((done) => {
         cc.assetManager.loadAny(visual.spriteFrameUuid, (err, asset) => {
+            const beforeSize = captureImportedNodeSize(node);
             if (!err && asset) {
                 sprite.spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
+                const spriteModeInfo = applyPreferredSpriteSizeMode(
+                    sprite,
+                    uiPolicy,
+                    visual.spriteFrameUuid,
+                    visual.preferredSizeMode,
+                );
+                preserveImportedSpriteNodeSize(
+                    node,
+                    visual,
+                    designSize,
+                    spriteModeInfo.appliedPreferredMode,
+                );
+                importDiagnostics.push({
+                    phase: "asset-load",
+                    path,
+                    assetPath: visual.assetPath || null,
+                    spriteFrameUuid: visual.spriteFrameUuid || null,
+                    designPreferredMode: visual.preferredSizeMode || null,
+                    detectedPreferredMode: spriteModeInfo.detectedPreferredMode,
+                    appliedPreferredMode: spriteModeInfo.appliedPreferredMode,
+                    textureName: spriteModeInfo.textureName || null,
+                    designSize: hasValidImportedDesignSize(designSize)
+                        ? {
+                              width: Number(designSize.width),
+                              height: Number(designSize.height),
+                          }
+                        : null,
+                    sizePreserveMode: resolveImportedSpritePreferredMode(
+                        visual,
+                        spriteModeInfo.appliedPreferredMode,
+                    ),
+                    nodeSizeBefore: beforeSize,
+                    nodeSizeAfter: captureImportedNodeSize(node),
+                    spriteModeAfter: resolveSpriteSizeModeName(sprite.sizeMode),
+                    spriteTypeAfter: resolveSpriteTypeName(sprite.type),
+                });
+            } else {
+                importDiagnostics.push({
+                    phase: "asset-load-error",
+                    path,
+                    assetPath: visual.assetPath || null,
+                    spriteFrameUuid: visual.spriteFrameUuid || null,
+                    error: err ? String(err.message || err) : "unknown-load-error",
+                });
             }
             done();
         });
     });
 };
 
-const createImportedDesignNode = (spec, pendingLoads) => {
+const createImportedDesignNode = (spec, pendingLoads, uiPolicy, importDiagnostics, pathSegments = []) => {
     const node = new cc.Node(spec.name || "DesignNode");
     node.anchorX = 0.5;
     node.anchorY = 0.5;
@@ -706,14 +867,22 @@ const createImportedDesignNode = (spec, pendingLoads) => {
         applyDesignTextStyle(node, spec.text);
     }
 
-    enqueueDesignSpriteLoad(node, spec.visual, pendingLoads);
+    enqueueDesignSpriteLoad(node, spec, pendingLoads, uiPolicy, importDiagnostics, pathSegments);
 
     if (spec.isButton && !node.getComponent(cc.Button)) {
         node.addComponent(cc.Button);
     }
 
     (spec.children || []).forEach((childSpec) => {
-        node.addChild(createImportedDesignNode(childSpec, pendingLoads));
+        node.addChild(
+            createImportedDesignNode(
+                childSpec,
+                pendingLoads,
+                uiPolicy,
+                importDiagnostics,
+                [...pathSegments, spec.name],
+            ),
+        );
     });
 
     return node;
@@ -983,7 +1152,12 @@ export = {
                     if (!err && (asset instanceof cc.SpriteFrame || asset instanceof cc.Texture2D)) {
                         const spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
                         sprite.spriteFrame = spriteFrame;
-                        applyPreferredSpriteSizeMode(sprite, args.uiPolicy, getSpriteFrameUuid(spriteFrame));
+                        applyPreferredSpriteSizeMode(
+                            sprite,
+                            args.uiPolicy,
+                            getSpriteFrameUuid(spriteFrame),
+                            null,
+                        );
                         Editor.Ipc.sendToMain("scene:dirty");
                     }
                 });
@@ -1321,6 +1495,7 @@ export = {
                                                     component,
                                                     args.uiPolicy,
                                                     autoNineSliceCandidateUuids[0],
+                                                    null,
                                                 );
                                             }
                                         }
@@ -2341,11 +2516,19 @@ export = {
 
         try {
             const pendingLoads = [];
-            const rootNode = createImportedDesignNode(args.layout, pendingLoads);
+            const importDiagnostics = [];
+            const rootNode = createImportedDesignNode(
+                args.layout,
+                pendingLoads,
+                args.uiPolicy,
+                importDiagnostics,
+                [],
+            );
             tempRoot.addChild(rootNode);
 
             runPendingDesignLoads(pendingLoads, () => {
                 try {
+                    reconcileImportedDesignNodeSize(rootNode, args.layout, importDiagnostics, []);
                     const prefabContent = serializeNodeToPrefabJson(rootNode, {
                         uiPolicy: args.uiPolicy,
                         rootPreset: args.spec && args.spec.rootPreset,
@@ -2354,6 +2537,7 @@ export = {
                         event.reply(null, {
                             prefabContent,
                             nodeCount: countImportedDesignNodes(args.layout),
+                            diagnostics: importDiagnostics,
                         });
                     }
                 } catch (e) {

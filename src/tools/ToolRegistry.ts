@@ -173,7 +173,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "analyze_design_layout",
-			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失和显式素材映射，再结合逻辑命名/逻辑分组方案决定 import_design_layout 参数。`,
+			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失、显式素材映射，以及当前命名/层级是否仍保留设计稿痕迹，再结合逻辑命名/逻辑分组方案决定 import_design_layout 参数。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -200,7 +200,7 @@ export const getToolsList = () => {
 					},
 					logic: {
 						type: "object",
-						description: "可选的逻辑重组方案。用于在正式导入前先验证根节点命名、逻辑分组和 property 规划是否合理。",
+						description: "逻辑重组方案。用于在正式导入前先验证根节点命名、逻辑分组和 property 规划是否合理；当分析结果提示 requiresExplicitLogic=true 时必须补齐。",
 					},
 					strictImageAssets: {
 						type: "boolean",
@@ -212,7 +212,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "import_design_layout",
-			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原尺寸和文本样式，并且只使用你提供的正式图片资源。若传入 logic 方案，会先按页面逻辑重命名和重组节点，再生成并绑定以逻辑成员为中心的脚本 @property。`,
+			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原尺寸和文本样式，并且只使用你提供的正式图片资源。导入前必须先形成足够的 logic 方案；工具会在命名/层级仍保留设计稿痕迹时直接拒绝导入。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -242,7 +242,7 @@ export const getToolsList = () => {
 					},
 					logic: {
 						type: "object",
-						description: "可选的逻辑重组方案。支持 rootName、dataInterfaceName、rules(matchId/matchName/path/name/propertyName/dataKey/group)，用于按页面逻辑而不是设计层级生成节点和脚本。",
+						description: "逻辑重组方案。支持 rootName、dataInterfaceName、rules(matchId/matchName/path/name/propertyName/dataKey/group)，用于按页面逻辑而不是设计层级生成节点和脚本；当设计稿节点仍是中文名/尺寸名/图层名时必须提供。",
 					},
 					rootPreset: {
 						type: "string",

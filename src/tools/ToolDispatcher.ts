@@ -16,6 +16,7 @@ import {
 } from "../utils/RepeatableUiScaffold";
 import {
 	analyzeNormalizedDesignLayout,
+	analyzeDesignLayoutLogicReadiness,
 	applyDesignLayoutLogic,
 	normalizeDesignImportArgs,
 	normalizeDesignLayoutDocument,
@@ -1285,6 +1286,93 @@ export class ToolDispatcher {
 		return collected;
 	}
 
+  static _collectImportedCustomSpriteNodes(node, collected = []) {
+		if (!node) {
+			return collected;
+		}
+		if (node.visual && node.visual.preferredSizeMode === "CUSTOM") {
+			collected.push({
+				name: node.name,
+				assetPath: node.visual.assetPath || null,
+				spriteFrameUuid: node.visual.spriteFrameUuid || null,
+				size: node.size || null,
+				useSliced: !!node.visual.useSliced,
+			});
+		}
+		(node.children || []).forEach((child) => {
+			ToolDispatcher._collectImportedCustomSpriteNodes(child, collected);
+		});
+		return collected;
+	}
+
+  static _logImportedDesignDiagnostics(prefabPath, diagnostics) {
+		if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
+			Logger.info(`[import_design_layout] prefab=${prefabPath} 未返回点9/CUSTOM 尺寸诊断日志`);
+			return;
+		}
+		Logger.info(
+			`[import_design_layout] prefab=${prefabPath} 收到 ${diagnostics.length} 条点9/CUSTOM 导入诊断日志`,
+		);
+		diagnostics.forEach((entry, index) => {
+			const fragments = [
+				`index=${index + 1}`,
+				`phase=${entry.phase || "unknown"}`,
+			];
+			if (entry.path) {
+				fragments.push(`path=${entry.path}`);
+			}
+			if (entry.assetPath) {
+				fragments.push(`asset=${entry.assetPath}`);
+			}
+			if (entry.textureName) {
+				fragments.push(`texture=${entry.textureName}`);
+			}
+			if (entry.designPreferredMode) {
+				fragments.push(`designMode=${entry.designPreferredMode}`);
+			}
+			if (entry.detectedPreferredMode) {
+				fragments.push(`detectedMode=${entry.detectedPreferredMode}`);
+			}
+			if (entry.appliedPreferredMode) {
+				fragments.push(`appliedMode=${entry.appliedPreferredMode}`);
+			}
+			if (entry.finalPreferredMode) {
+				fragments.push(`finalMode=${entry.finalPreferredMode}`);
+			}
+			if (entry.sizePreserveMode) {
+				fragments.push(`sizePreserveMode=${entry.sizePreserveMode}`);
+			}
+			if (entry.designSize) {
+				fragments.push(`designSize=${entry.designSize.width}x${entry.designSize.height}`);
+			}
+			if (entry.nodeSizeBefore) {
+				fragments.push(`nodeBefore=${entry.nodeSizeBefore.width}x${entry.nodeSizeBefore.height}`);
+			}
+			if (entry.nodeSizeAfter) {
+				fragments.push(`nodeAfter=${entry.nodeSizeAfter.width}x${entry.nodeSizeAfter.height}`);
+			}
+			if (entry.spriteModeBefore) {
+				fragments.push(`spriteModeBefore=${entry.spriteModeBefore}`);
+			}
+			if (entry.spriteModeAfter) {
+				fragments.push(`spriteModeAfter=${entry.spriteModeAfter}`);
+			}
+			if (entry.spriteTypeBefore) {
+				fragments.push(`spriteTypeBefore=${entry.spriteTypeBefore}`);
+			}
+			if (entry.spriteTypeAfter) {
+				fragments.push(`spriteTypeAfter=${entry.spriteTypeAfter}`);
+			}
+			if (entry.error) {
+				fragments.push(`error=${entry.error}`);
+			}
+			if (entry.childIndex !== undefined) {
+				fragments.push(`childIndex=${entry.childIndex}`);
+			}
+			Logger.info(`[import_design_layout] ${fragments.join(" | ")}`);
+		});
+	}
+
   static importDesignLayout(args, callback) {
 		let spec;
 		try {
@@ -1317,6 +1405,17 @@ export class ToolDispatcher {
 			normalizedLayout = applyDesignLayoutLogic(normalizedLayout, spec.logic);
 		} catch (e) {
 			return callback(`读取设计 JSON 失败: ${e.message}`);
+		}
+
+		const logicReadiness = analyzeDesignLayoutLogicReadiness(normalizedLayout);
+		if (logicReadiness.requiresExplicitLogic) {
+			const preview = logicReadiness.issues
+				.slice(0, 8)
+				.map((issue) => `${issue.name}(${issue.reason})`)
+				.join(", ");
+			return callback(
+				`设计导入缺少足够的 logic 方案，当前仍有 ${logicReadiness.issues.length} 个节点名称/层级保留设计稿痕迹。请补充 logic.rootName 与 logic.rules 后再导入: ${preview}`,
+			);
 		}
 
 		const analysis = analyzeNormalizedDesignLayout(normalizedLayout);
@@ -1372,6 +1471,19 @@ export class ToolDispatcher {
 							assetUuidMap,
 						);
 						const sanitizedLayout = ToolDispatcher._sanitizeImportedLayoutNames(layoutWithUuids, uiPolicy);
+						const customSpriteNodes = ToolDispatcher._collectImportedCustomSpriteNodes(sanitizedLayout);
+						Logger.info(
+							`[import_design_layout] 开始导入 prefab=${spec.prefabPath} json=${jsonFsPath} customSpriteCount=${customSpriteNodes.length}`,
+						);
+						customSpriteNodes.forEach((node, index) => {
+							const sizeText =
+								node.size && Number.isFinite(Number(node.size.width)) && Number.isFinite(Number(node.size.height))
+									? `${Number(node.size.width)}x${Number(node.size.height)}`
+									: "invalid";
+							Logger.info(
+								`[import_design_layout] customSprite index=${index + 1} name=${node.name} asset=${node.assetPath || "null"} size=${sizeText} useSliced=${node.useSliced} uuid=${node.spriteFrameUuid || "pending"}`,
+							);
+						});
 						CommandQueue.callSceneScriptWithTimeout(
 							"mcp-bridge",
 							"import-design-layout",
@@ -1384,6 +1496,10 @@ export class ToolDispatcher {
 								if (err) {
 									return callback(err);
 								}
+								ToolDispatcher._logImportedDesignDiagnostics(
+									spec.prefabPath,
+									importResult && importResult.diagnostics,
+								);
 								ToolDispatcher._writeOrCreateAsset(
 									spec.prefabPath,
 									importResult.prefabContent,
@@ -1489,6 +1605,7 @@ export class ToolDispatcher {
 			});
 			normalizedLayout = applyDesignLayoutLogic(normalizedLayout, spec.logic);
 			const analysis = analyzeNormalizedDesignLayout(normalizedLayout);
+			const logicReadiness = analyzeDesignLayoutLogicReadiness(normalizedLayout);
 
 			callback(null, {
 				ok: true,
@@ -1503,6 +1620,7 @@ export class ToolDispatcher {
 					name: normalizedLayout.root.name,
 					size: normalizedLayout.root.size,
 				},
+				logicReadiness,
 				analysis,
 			});
 		} catch (e) {

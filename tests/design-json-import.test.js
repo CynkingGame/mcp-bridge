@@ -198,6 +198,117 @@ test("normalizeDesignLayoutDocument prefers explicit imageAssetMap over generate
     );
 });
 
+test("normalizeDesignLayoutDocument treats mapped 点9 assets as sliced custom sprites", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "Invite Data",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "card",
+                        name: "衬底 672X302",
+                        type: "image",
+                        frame: { x: 24, y: 120, width: 672, height: 302 },
+                        style: {},
+                        children: [],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+            imageAssetMap: {
+                "衬底 672X302": "db://assets/hall/textures/agent/衬底（共用）（点9）.png",
+            },
+        },
+    );
+
+    const cardNode = normalized.root.children[0];
+
+    assert.equal(cardNode.visual.assetPath, "db://assets/hall/textures/agent/衬底（共用）（点9）.png");
+    assert.equal(cardNode.visual.useSliced, true);
+    assert.equal(cardNode.visual.preferredSizeMode, "CUSTOM");
+});
+
+test("normalizeDesignLayoutDocument matches agent asset names across 点9 hints and common prefixes", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "Invite Reward",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "tableBg",
+                        name: "表格衬底 622X56",
+                        type: "image",
+                        frame: { x: 24, y: 120, width: 622, height: 56 },
+                        style: {},
+                        children: [],
+                    },
+                    {
+                        id: "tabSlot",
+                        name: "tab-底槽 466X62",
+                        type: "image",
+                        frame: { x: 24, y: 200, width: 466, height: 62 },
+                        style: {},
+                        children: [],
+                    },
+                    {
+                        id: "moneyBag",
+                        name: "钱袋",
+                        type: "image",
+                        frame: { x: 24, y: 320, width: 64, height: 64 },
+                        style: {},
+                        children: [],
+                    },
+                    {
+                        id: "copyBtn",
+                        name: "复制",
+                        type: "image",
+                        frame: { x: 120, y: 320, width: 120, height: 52 },
+                        style: {},
+                        children: [],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteReward",
+            imageAssetPaths: [
+                "db://assets/hall/textures/agent/表格衬底（点9）.png",
+                "db://assets/hall/textures/agent/tab-底槽（共用）（点9）.png",
+                "db://assets/hall/textures/agent/图标-钱袋.png",
+                "db://assets/hall/textures/agent/按钮-复制.png",
+            ],
+        },
+    );
+
+    const byName = Object.fromEntries(normalized.root.children.map((child) => [child.name, child]));
+
+    assert.equal(byName["表格衬底 622X56"].visual.assetPath, "db://assets/hall/textures/agent/表格衬底（点9）.png");
+    assert.equal(byName["表格衬底 622X56"].visual.preferredSizeMode, "CUSTOM");
+    assert.equal(byName["表格衬底 622X56"].visual.useSliced, true);
+
+    assert.equal(byName["tab-底槽 466X62"].visual.assetPath, "db://assets/hall/textures/agent/tab-底槽（共用）（点9）.png");
+    assert.equal(byName["tab-底槽 466X62"].visual.preferredSizeMode, "CUSTOM");
+    assert.equal(byName["tab-底槽 466X62"].visual.useSliced, true);
+
+    assert.equal(byName["钱袋"].visual.assetPath, "db://assets/hall/textures/agent/图标-钱袋.png");
+    assert.equal(byName["钱袋"].visual.preferredSizeMode, "RAW");
+    assert.equal(byName["钱袋"].visual.useSliced, false);
+
+    assert.equal(byName["复制"].visual.assetPath, "db://assets/hall/textures/agent/按钮-复制.png");
+    assert.equal(byName["复制"].visual.preferredSizeMode, "RAW");
+    assert.equal(byName["复制"].visual.useSliced, false);
+});
+
 test("normalizeDesignImportArgs always enforces resource-only image mode", () => {
     const spec = designJson.normalizeDesignImportArgs({
         jsonPath: "hall_info/Ludo Tour选场-Tab-Prize.json",
@@ -225,7 +336,134 @@ test("analyzeNormalizedDesignLayout reports unresolved images for AI-side planni
     assert.equal(Array.isArray(analysis.missingImageNodes), true);
     assert.equal(Array.isArray(analysis.resolvedImageNodes), true);
     assert.equal(analysis.resolvedImageNodes.some((node) => node.name === "btn"), true);
+    const resolvedButton = analysis.resolvedImageNodes.find((node) => node.name === "btn");
+    assert.equal(resolvedButton.preferredSizeMode, "RAW");
     assert.equal(analysis.missingImageNodes.length > 0, true);
+});
+
+test("analyzeNormalizedDesignLayout exposes CUSTOM mode for auto-matched 点9 assets", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "Invite Reward",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "tableBg",
+                        name: "表格衬底 622X56",
+                        type: "image",
+                        frame: { x: 24, y: 120, width: 622, height: 56 },
+                        style: {},
+                        children: [],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteReward",
+            imageAssetPaths: ["db://assets/hall/textures/agent/表格衬底（点9）.png"],
+        },
+    );
+
+    const analysis = designJson.analyzeNormalizedDesignLayout(normalized);
+    const tableBg = analysis.resolvedImageNodes.find((node) => node.name === "表格衬底 622X56");
+
+    assert.ok(tableBg);
+    assert.equal(tableBg.preferredSizeMode, "CUSTOM");
+    assert.equal(tableBg.useSliced, true);
+});
+
+test("analyzeDesignLayoutLogicReadiness requires explicit logic for design-layer naming", () => {
+    assert.equal(typeof designJson.analyzeDesignLayoutLogicReadiness, "function");
+
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "邀请数据",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "section",
+                        name: "今日数据",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [
+                            {
+                                id: "card",
+                                name: "衬底 672X302",
+                                type: "image",
+                                frame: { x: 0, y: 0, width: 672, height: 302 },
+                                style: {},
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(normalized);
+
+    assert.equal(readiness.requiresExplicitLogic, true);
+    assert.deepEqual(
+        readiness.issues.map((issue) => issue.reason),
+        ["non-ascii-name", "non-ascii-name", "non-ascii-name"],
+    );
+});
+
+test("analyzeDesignLayoutLogicReadiness passes after logic rewrites semantic names", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "页面",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "today",
+                        name: "今日数据",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const logical = designJson.applyDesignLayoutLogic(normalized, {
+        rootName: "InviteView",
+        rules: [
+            {
+                matchId: "today",
+                name: "todaySection",
+                path: "content",
+                group: "content",
+            },
+        ],
+    });
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(logical);
+
+    assert.equal(readiness.requiresExplicitLogic, false);
+    assert.deepEqual(readiness.issues, []);
 });
 
 test("applyDesignLayoutLogic rewrites node names and hierarchy around page logic", () => {

@@ -1,4 +1,5 @@
 import path from "path";
+import { isAutoNineSliceTextureName } from "./AutoNineSlice";
 
 export interface DesignImportInput {
 	jsonPath: string;
@@ -116,6 +117,7 @@ export interface DesignLayoutAnalysisNode {
 	assetPath?: string | null;
 	source?: "explicit-map" | "asset-dir" | "missing";
 	useSliced?: boolean;
+	preferredSizeMode?: "RAW" | "CUSTOM";
 }
 
 export interface DesignLayoutAnalysis {
@@ -132,6 +134,18 @@ export interface DesignLayoutAnalysis {
 	resolvedImageNodes: DesignLayoutAnalysisNode[];
 	missingImageNodes: DesignLayoutAnalysisNode[];
 	generatedShapeNodes: DesignLayoutAnalysisNode[];
+}
+
+export interface DesignLayoutLogicIssue {
+	id: string;
+	name: string;
+	nodeType: "container" | "image" | "text";
+	reason: "non-ascii-name" | "size-suffixed-name" | "layer-style-name";
+}
+
+export interface DesignLayoutLogicReadiness {
+	requiresExplicitLogic: boolean;
+	issues: DesignLayoutLogicIssue[];
 }
 
 interface RectLike {
@@ -316,16 +330,68 @@ function buildTextSpec(node: any): NormalizedDesignTextSpec | null {
 	};
 }
 
-function shouldUseSliced(node: any): boolean {
-	return /点9/.test(String(node?.name || ""));
+function assetPathLooksNineSlice(assetPath: string | null | undefined): boolean {
+	if (!assetPath) {
+		return false;
+	}
+	return isAutoNineSliceTextureName(path.basename(String(assetPath)));
+}
+
+function shouldUseSliced(node: any, resolvedAssetPath?: string | null): boolean {
+	return /点9/.test(String(node?.name || "")) || assetPathLooksNineSlice(resolvedAssetPath);
 }
 
 function stripNodeSizeSuffix(input: string): string {
 	return String(input || "").replace(/[\s_-]*\d+\s*[xX×]\s*\d+$/g, "").trim();
 }
 
+function stripBracketedSegments(input: string): string {
+	return String(input || "").replace(/[（(][^）)]*[）)]/g, "");
+}
+
+function stripGenericAssetPrefixes(input: string): string {
+	return String(input || "").replace(/^(?:社交图标|图标|按钮)[\s_-]*/i, "");
+}
+
+function canonicalizeAssetAlias(input: string): string {
+	const normalized = String(input || "").toLowerCase();
+	const aliases: Record<string, string> = {
+		fb: "facebook",
+		facebook: "facebook",
+		ins: "instagram",
+		instagram: "instagram",
+		tg: "telegram",
+		telegram: "telegram",
+		whatapp: "whatsapp",
+		whatsapp: "whatsapp",
+	};
+	return aliases[normalized] || normalized;
+}
+
 function normalizeAssetKey(input: string): string {
-	return sanitizeStem(stripNodeSizeSuffix(input)).replace(/[_-]+/g, "").toLowerCase();
+	const stem = sanitizeStem(stripNodeSizeSuffix(input))
+		.replace(/[（）()]/g, "")
+		.replace(/[_-]+/g, "")
+		.toLowerCase();
+	return canonicalizeAssetAlias(stem);
+}
+
+function buildAssetLookupKeys(input: string): string[] {
+	const value = String(input || "").trim();
+	if (!value) {
+		return [];
+	}
+	const candidates = [
+		value,
+		stripNodeSizeSuffix(value),
+		stripBracketedSegments(value),
+		stripBracketedSegments(stripNodeSizeSuffix(value)),
+		stripGenericAssetPrefixes(value),
+		stripGenericAssetPrefixes(stripNodeSizeSuffix(value)),
+		stripGenericAssetPrefixes(stripBracketedSegments(value)),
+		stripGenericAssetPrefixes(stripBracketedSegments(stripNodeSizeSuffix(value))),
+	];
+	return Array.from(new Set(candidates.map((item) => normalizeAssetKey(item)).filter(Boolean)));
 }
 
 function buildImageAssetLookup(paths: string[]): Map<string, string> {
@@ -333,9 +399,7 @@ function buildImageAssetLookup(paths: string[]): Map<string, string> {
 	(paths || []).forEach((assetPath) => {
 		const ext = path.extname(assetPath || "");
 		const base = path.basename(assetPath || "", ext);
-		const keys = [base, stripNodeSizeSuffix(base)]
-			.map((item) => normalizeAssetKey(item))
-			.filter(Boolean);
+		const keys = buildAssetLookupKeys(base);
 		keys.forEach((key) => {
 			if (!lookup.has(key)) {
 				lookup.set(key, assetPath);
@@ -349,12 +413,14 @@ function resolveProvidedImageAsset(node: any, imageAssetLookup: Map<string, stri
 	if (!imageAssetLookup || imageAssetLookup.size === 0) {
 		return null;
 	}
-	const candidates = [
+	const candidates = Array.from(
+		new Set(
+			[
 		node?.name,
 		node?.assetsRef?.imagePath ? path.basename(String(node.assetsRef.imagePath), path.extname(String(node.assetsRef.imagePath))) : "",
-	]
-		.map((item) => normalizeAssetKey(String(item || "")))
-		.filter(Boolean);
+			].flatMap((item) => buildAssetLookupKeys(String(item || ""))),
+		),
+	);
 	for (const candidate of candidates) {
 		if (imageAssetLookup.has(candidate)) {
 			return imageAssetLookup.get(candidate) || null;
@@ -382,9 +448,9 @@ function createNodeVisual(
 		imageAssetMap?: Record<string, string>;
 	},
 ): NormalizedDesignVisualSpec | null {
-	const sliced = shouldUseSliced(node);
 	const mappedAssetPath = resolveMappedImageAsset(node, options.imageAssetMap);
 	if (mappedAssetPath) {
+		const sliced = shouldUseSliced(node, mappedAssetPath);
 		return {
 			assetPath: mappedAssetPath,
 			preferredSizeMode: sliced ? "CUSTOM" : "RAW",
@@ -394,6 +460,7 @@ function createNodeVisual(
 	}
 	const providedAssetPath = resolveProvidedImageAsset(node, options.imageAssetLookup);
 	if (providedAssetPath) {
+		const sliced = shouldUseSliced(node, providedAssetPath);
 		return {
 			assetPath: providedAssetPath,
 			preferredSizeMode: sliced ? "CUSTOM" : "RAW",
@@ -683,6 +750,7 @@ export function analyzeNormalizedDesignLayout(layout: NormalizedDesignLayoutDocu
 					assetPath: node.visual.assetPath,
 					source: node.visual.source,
 					useSliced: node.visual.useSliced,
+					preferredSizeMode: node.visual.preferredSizeMode,
 				});
 			} else {
 				summary.missingImageNodes++;
@@ -706,5 +774,58 @@ export function analyzeNormalizedDesignLayout(layout: NormalizedDesignLayoutDocu
 		resolvedImageNodes,
 		missingImageNodes,
 		generatedShapeNodes,
+	};
+}
+
+function hasNonAsciiName(name: string): boolean {
+	return /[^\x00-\x7F]/.test(String(name || ""));
+}
+
+function looksLikeSizeSuffixedDesignName(name: string): boolean {
+	return /\d+\s*[xX×]\s*\d+/.test(String(name || ""));
+}
+
+function looksLikeLayerStyleName(name: string): boolean {
+	return /(?:^|[_\s-])layer(?:[_\s-]?\d+)?$/i.test(String(name || ""));
+}
+
+export function analyzeDesignLayoutLogicReadiness(
+	layout: NormalizedDesignLayoutDocument,
+): DesignLayoutLogicReadiness {
+	const issues: DesignLayoutLogicIssue[] = [];
+
+	const visit = (node: NormalizedDesignNode) => {
+		const rawName = String(node.name || "");
+		if (hasNonAsciiName(rawName)) {
+			issues.push({
+				id: node.id,
+				name: rawName,
+				nodeType: node.nodeType,
+				reason: "non-ascii-name",
+			});
+		} else if (looksLikeSizeSuffixedDesignName(rawName)) {
+			issues.push({
+				id: node.id,
+				name: rawName,
+				nodeType: node.nodeType,
+				reason: "size-suffixed-name",
+			});
+		} else if (looksLikeLayerStyleName(rawName)) {
+			issues.push({
+				id: node.id,
+				name: rawName,
+				nodeType: node.nodeType,
+				reason: "layer-style-name",
+			});
+		}
+
+		(node.children || []).forEach(visit);
+	};
+
+	visit(layout.root);
+
+	return {
+		requiresExplicitLogic: issues.length > 0,
+		issues,
 	};
 }
