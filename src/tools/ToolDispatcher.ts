@@ -32,6 +32,7 @@ import {
 	getNodeNamingPolicy,
 } from "../utils/NodeNaming";
 import { resolveProjectFontAssetUuid } from "../utils/FontAssetResolver";
+import { disableSpriteFrameTrim } from "../utils/TextureMeta";
 declare const Editor: any;
 
 function getNewSceneTemplate() { return `[
@@ -714,7 +715,12 @@ export class ToolDispatcher {
 					fs.writeFileSync(fsPath, content, "utf-8");
 				}
 				Editor.assetdb.refresh(assetPath, (err) => {
-					callback(err || null, err ? null : `资源已更新: ${assetPath}`);
+					if (err) {
+						return callback(err || null, null);
+					}
+					ToolDispatcher._forceTextureTrimNone(assetPath, (_trimErr, trimUpdated) => {
+						callback(null, trimUpdated ? `资源已更新并关闭 Trim: ${assetPath}` : `资源已更新: ${assetPath}`);
+					});
 				});
 			} catch (e) {
 				callback(`写入资源失败: ${e.message}`);
@@ -722,7 +728,14 @@ export class ToolDispatcher {
 			return;
 		}
 
-		AssetPatcher.safeCreateAsset(assetPath, content, callback, null);
+		AssetPatcher.safeCreateAsset(assetPath, content, (createErr, createMessage) => {
+			if (createErr) {
+				return callback(createErr);
+			}
+			ToolDispatcher._forceTextureTrimNone(assetPath, (_trimErr, trimUpdated) => {
+				callback(null, trimUpdated ? `资源已安全原生导入并关闭 Trim: ${assetPath}` : createMessage);
+			});
+		}, null);
 	}
 
   static _resolveJsonInputPath(inputPath) {
@@ -879,6 +892,55 @@ export class ToolDispatcher {
   static _refreshAsset(assetPath, callback) {
 		Editor.assetdb.refresh(assetPath, (err) => {
 			callback(err || null, err ? null : `编辑器已刷新: ${assetPath}`);
+		});
+	}
+
+  static _isTextureAssetPath(assetPath) {
+		const ext = pathModule.extname(String(assetPath || "")).toLowerCase();
+		return [".png", ".jpg", ".jpeg", ".webp"].includes(ext);
+	}
+
+  static _loadAssetMetaByPath(assetPath) {
+		if (!assetPath || !Editor.assetdb.exists(assetPath)) {
+			return null;
+		}
+		const uuid = Editor.assetdb.urlToUuid(assetPath);
+		if (!uuid) {
+			return null;
+		}
+		let meta = Editor.assetdb.loadMeta(uuid);
+		if (meta) {
+			return { uuid, meta };
+		}
+		try {
+			const fsPath = Editor.assetdb.urlToFspath(assetPath);
+			if (!fsPath) {
+				return null;
+			}
+			const metaPath = `${fsPath}.meta`;
+			if (!fs.existsSync(metaPath)) {
+				return null;
+			}
+			meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+			return meta ? { uuid, meta } : null;
+		} catch (_error) {
+			return null;
+		}
+	}
+
+  static _forceTextureTrimNone(assetPath, callback) {
+		if (!ToolDispatcher._isTextureAssetPath(assetPath)) {
+			return callback(null, false);
+		}
+		const metaState = ToolDispatcher._loadAssetMetaByPath(assetPath);
+		if (!metaState || !metaState.meta) {
+			return callback(null, false);
+		}
+		if (!disableSpriteFrameTrim(metaState.meta)) {
+			return callback(null, false);
+		}
+		Editor.assetdb.saveMeta(metaState.uuid, JSON.stringify(metaState.meta), (err) => {
+			callback(err || null, !err);
 		});
 	}
 
@@ -2423,15 +2485,21 @@ CCProgram fs %{
 								if (changed) {
 									Editor.assetdb.saveMeta(uuid, JSON.stringify(meta), (metaErr) => {
 										if (metaErr) Editor.warn(`保存资源 Meta 失败 ${path}: ${metaErr}`);
-										doneCreate(null, `纹理已创建并更新 Meta: ${path}`);
+										ToolDispatcher._forceTextureTrimNone(path, () => {
+											doneCreate(null, `纹理已创建并更新 Meta: ${path}`);
+										});
 									});
 									return; // 内部完成
 								}
 							}
-							doneCreate(null, `纹理已创建: ${path}`);
+							ToolDispatcher._forceTextureTrimNone(path, () => {
+								doneCreate(null, `纹理已创建: ${path}`);
+							});
 						}, 100);
 					} else {
-						doneCreate(null, `纹理已创建: ${path}`);
+						ToolDispatcher._forceTextureTrimNone(path, () => {
+							doneCreate(null, `纹理已创建: ${path}`);
+						});
 					}
 				});
 				break;
@@ -2554,10 +2622,14 @@ CCProgram fs %{
 					// 为了安全，如果 loadMeta 失败了，safeMeta 可能也会失败，所以这里尽量用 API，不行再 fallback (暂且只用 API)
 					Editor.assetdb.saveMeta(uuid, JSON.stringify(meta), (err) => {
 						if (err) return callback(`保存 Meta 失败: ${err}`);
-						callback(null, `纹理已更新: ${path}`);
+						ToolDispatcher._forceTextureTrimNone(path, () => {
+							callback(null, `纹理已更新: ${path}`);
+						});
 					});
 				} else {
-					callback(null, `资源不需要更新: ${path}`);
+					ToolDispatcher._forceTextureTrimNone(path, (_trimErr, trimUpdated) => {
+						callback(null, trimUpdated ? `纹理已更新 Trim: ${path}` : `资源不需要更新: ${path}`);
+					});
 				}
 				break;
 			default:

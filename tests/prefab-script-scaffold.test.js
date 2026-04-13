@@ -122,6 +122,57 @@ test("buildPrefabComponentBindings resolves node uuids for properties and button
     ]);
 });
 
+test("buildPrefabComponentBindings resolves node uuids when hierarchy wraps prefab root", () => {
+    const spec = buildPrefabScriptScaffoldSpec("db://assets/hall/prefabs/agent/InviteView.prefab", {
+        name: "InviteView",
+        components: [],
+        children: [
+            {
+                name: "TitleLabel",
+                components: ["Label"],
+                children: [],
+            },
+            {
+                name: "InviteButton",
+                components: ["Button"],
+                children: [],
+            },
+        ],
+    });
+
+    const bindings = buildPrefabComponentBindings(spec, {
+        uuid: "scene-uuid",
+        name: "Scene",
+        children: [
+            {
+                uuid: "root-uuid",
+                name: "InviteView",
+                children: [
+                    {
+                        uuid: "label-uuid",
+                        name: "TitleLabel",
+                        children: [],
+                    },
+                    {
+                        uuid: "button-uuid",
+                        name: "InviteButton",
+                        children: [],
+                    },
+                ],
+            },
+        ],
+    });
+
+    assert.equal(bindings.properties.titleLabel, "label-uuid");
+    assert.equal(bindings.properties.inviteButton, "button-uuid");
+    assert.deepEqual(bindings.buttonEvents, [
+        {
+            nodeId: "button-uuid",
+            handlerName: "onInviteButtonClick",
+        },
+    ]);
+});
+
 test("buildPrefabScriptScaffoldSpec sanitizes bindings that start with digits", () => {
     const spec = buildPrefabScriptScaffoldSpec("db://assets/hall/prefabs/agent/InviteView.prefab", {
         name: "InviteView",

@@ -23,6 +23,7 @@ export interface PrefabScriptBindingSpec {
 
 export interface PrefabScriptScaffoldSpec {
 	className: string;
+	rootNodeName: string;
 	scriptPath: string;
 	dataInterfaceName?: string;
 	bindings: PrefabScriptBindingSpec[];
@@ -250,6 +251,7 @@ export function buildPrefabScriptScaffoldSpec(
 
 	return {
 		className,
+		rootNodeName: String(rootNode && rootNode.name ? rootNode.name : "").trim() || className,
 		scriptPath,
 		dataInterfaceName: String(options && options.dataInterfaceName ? options.dataInterfaceName : "").trim() || undefined,
 		bindings,
@@ -430,6 +432,26 @@ function resolveNodeByPathIndices(
 	return current;
 }
 
+function resolveBindingRoot(
+	rootNode: PrefabScriptNodeSnapshot | null | undefined,
+	targetRootName: string,
+): PrefabScriptNodeSnapshot | null {
+	if (!rootNode) {
+		return null;
+	}
+	const expectedName = String(targetRootName || "").trim();
+	if (!expectedName || rootNode.name === expectedName) {
+		return rootNode;
+	}
+	for (const child of rootNode.children || []) {
+		const found = resolveBindingRoot(child, expectedName);
+		if (found) {
+			return found;
+		}
+	}
+	return null;
+}
+
 export function buildPrefabComponentBindings(
 	spec: PrefabScriptScaffoldSpec,
 	rootNode: PrefabScriptNodeSnapshot,
@@ -439,9 +461,10 @@ export function buildPrefabComponentBindings(
 } {
 	const properties: Record<string, string> = {};
 	const buttonEvents: Array<{ nodeId: string; handlerName: string }> = [];
+	const bindingRoot = resolveBindingRoot(rootNode, spec.rootNodeName) || rootNode;
 
 	spec.bindings.forEach((binding) => {
-		const targetNode = resolveNodeByPathIndices(rootNode, binding.pathIndices);
+		const targetNode = resolveNodeByPathIndices(bindingRoot, binding.pathIndices);
 		if (!targetNode || !(targetNode as any).uuid) {
 			return;
 		}

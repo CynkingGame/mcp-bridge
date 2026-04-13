@@ -143,7 +143,12 @@ export interface DesignLayoutLogicIssue {
 	id: string;
 	name: string;
 	nodeType: "container" | "image" | "text";
-	reason: "non-ascii-name" | "size-suffixed-name" | "layer-style-name" | "placeholder-generic-name";
+	reason:
+		| "non-ascii-name"
+		| "size-suffixed-name"
+		| "layer-style-name"
+		| "placeholder-generic-name"
+		| "text-content-name";
 }
 
 export interface DesignLayoutLogicReadiness {
@@ -860,6 +865,25 @@ function looksLikePlaceholderGenericName(name: string): boolean {
 	return /^(?:img|txt|ctn|grp|spr|lab|lbl|btn|node|icon)[_-]?\d+$/i.test(String(name || ""));
 }
 
+function normalizeNameLiteral(input: string): string {
+	return String(input || "")
+		.normalize("NFKD")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "");
+}
+
+function looksLikeTextContentName(node: NormalizedDesignNode): boolean {
+	if (node.nodeType !== "text" || !node.text || !node.text.content) {
+		return false;
+	}
+	const normalizedName = normalizeNameLiteral(node.name);
+	const normalizedContent = normalizeNameLiteral(node.text.content);
+	if (!normalizedName || !normalizedContent) {
+		return false;
+	}
+	return normalizedName === normalizedContent;
+}
+
 export function analyzeDesignLayoutLogicReadiness(
 	layout: NormalizedDesignLayoutDocument,
 ): DesignLayoutLogicReadiness {
@@ -873,6 +897,13 @@ export function analyzeDesignLayoutLogicReadiness(
 				name: rawName,
 				nodeType: node.nodeType,
 				reason: "non-ascii-name",
+			});
+		} else if (looksLikeTextContentName(node)) {
+			issues.push({
+				id: node.id,
+				name: rawName,
+				nodeType: node.nodeType,
+				reason: "text-content-name",
 			});
 		} else if (looksLikePlaceholderGenericName(rawName)) {
 			issues.push({

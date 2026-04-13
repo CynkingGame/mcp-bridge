@@ -530,6 +530,59 @@ test("analyzeDesignLayoutLogicReadiness rejects generic placeholder names", () =
     );
 });
 
+test("analyzeDesignLayoutLogicReadiness rejects text nodes named after their display copy", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "InviteBonusView",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "rules",
+                        name: "grpRules",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [
+                            {
+                                id: "betRule",
+                                name: "1_Commission_is_earned_when_valid_invites_place_bets_on_Slots",
+                                type: "text",
+                                frame: { x: 40, y: 48, width: 580, height: 64 },
+                                style: {},
+                                text: {
+                                    content: "1. Commission is earned when valid invites place bets on Slots",
+                                    font: {
+                                        family: "Arial",
+                                        size: 24,
+                                        lineHeight: 30,
+                                        align: "left",
+                                        color: { r: 255, g: 255, b: 255, a: 1 },
+                                    },
+                                },
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(normalized);
+
+    assert.equal(readiness.requiresExplicitLogic, true);
+    assert.equal(readiness.issues.length, 1);
+    assert.equal(readiness.issues[0].id, "betRule");
+    assert.equal(readiness.issues[0].reason, "text-content-name");
+});
+
 test("applyDesignLayoutLogic can derive semantic node names from AI binding hints", () => {
     const normalized = designJson.normalizeDesignLayoutDocument(
         {
