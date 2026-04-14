@@ -455,6 +455,8 @@ const snapshotNodeForValidation = (node) => {
 
     const widget = node.getComponent(cc.Widget);
     const safeArea = node.getComponent(cc.SafeArea);
+    const label = node.getComponent(cc.Label);
+    const richText = node.getComponent(cc.RichText);
     const components = (node._components || []).map((component) => cc.js.getClassName(component));
 
     return {
@@ -469,6 +471,7 @@ const snapshotNodeForValidation = (node) => {
             height: node.height,
         },
         components,
+        labelText: label ? label.string : richText ? richText.string : null,
         hasSafeArea: !!safeArea,
         widget: widget
             ? {

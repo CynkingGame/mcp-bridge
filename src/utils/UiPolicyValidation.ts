@@ -1,5 +1,5 @@
 import { resolveNamedUiPreset, resolvePrefabRootPolicy, UiPolicyConfig, UiLayoutName } from "./UiPolicy";
-import { getNodeNameValidationMessage } from "./NodeNaming";
+import { getNodeNameValidationMessage, isNodeNameDerivedFromDisplayCopy } from "./NodeNaming";
 
 export interface UiWidgetSnapshot {
 	isAlignTop?: boolean;
@@ -22,6 +22,7 @@ export interface UiNodeSnapshot {
 		height: number;
 	} | null;
 	components?: string[];
+	labelText?: string | null;
 	hasSafeArea?: boolean;
 	widget?: UiWidgetSnapshot | null;
 	children?: UiNodeSnapshot[];
@@ -150,6 +151,16 @@ export function validateUiTree(
 				severity: "error",
 				code: "node-name-non-english",
 				message: nodeNameError,
+				nodeName: currentNode.name,
+				nodeUuid: currentNode.uuid,
+			});
+		}
+
+		if (isNodeNameDerivedFromDisplayCopy(currentNode.name, currentNode.labelText || "")) {
+			findings.push({
+				severity: "error",
+				code: "node-name-copy-derived",
+				message: `节点名称仍保留展示文案痕迹，请改为语义化命名: ${currentNode.name}`,
 				nodeName: currentNode.name,
 				nodeUuid: currentNode.uuid,
 			});

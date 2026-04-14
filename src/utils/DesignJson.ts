@@ -1,5 +1,6 @@
 import path from "path";
 import { isAutoNineSliceTextureName } from "./AutoNineSlice";
+import { isNodeNameDerivedFromDisplayCopy } from "./NodeNaming";
 
 export interface DesignImportInput {
 	jsonPath: string;
@@ -978,26 +979,16 @@ function looksLikeLayerStyleName(name: string): boolean {
 }
 
 function looksLikePlaceholderGenericName(name: string): boolean {
-	return /^(?:img|txt|ctn|grp|spr|lab|lbl|btn|node|icon)[_-]?\d+$/i.test(String(name || ""));
-}
-
-function normalizeNameLiteral(input: string): string {
-	return String(input || "")
-		.normalize("NFKD")
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "");
+	return /^(?:img|image|txt|text|ctn|container|grp|group|spr|sprite|lab|label|lbl|btn|button|node|icon)[_-]?\d+$/i.test(
+		String(name || ""),
+	);
 }
 
 function looksLikeTextContentName(node: NormalizedDesignNode): boolean {
 	if (node.nodeType !== "text" || !node.text || !node.text.content) {
 		return false;
 	}
-	const normalizedName = normalizeNameLiteral(node.name);
-	const normalizedContent = normalizeNameLiteral(node.text.content);
-	if (!normalizedName || !normalizedContent) {
-		return false;
-	}
-	return normalizedName === normalizedContent;
+	return isNodeNameDerivedFromDisplayCopy(node.name, node.text.content);
 }
 
 export function analyzeDesignLayoutLogicReadiness(

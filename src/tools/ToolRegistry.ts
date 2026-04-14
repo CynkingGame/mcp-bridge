@@ -173,7 +173,7 @@ export const getToolsList = () => {
 		},
 		{
 			name: "analyze_design_layout",
-			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失、显式素材映射，以及当前命名/层级是否仍保留设计稿痕迹，再结合逻辑命名/逻辑分组方案决定 import_design_layout 参数。`,
+			description: `${globalPrecautions} 只读分析设计节点 JSON，不创建资源。用于让 AI 先识别图片缺失、显式素材映射，以及当前命名/层级是否仍保留设计稿痕迹。返回结果会附带 recommendedImportArgs，可直接作为 import_design_layout 参数使用，避免手写 logic.rules。`,
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -211,8 +211,51 @@ export const getToolsList = () => {
 			},
 		},
 		{
+			name: "generate_ui_from_psd",
+			description: `${globalPrecautions} 调用内置的 psd2code-studio 导出 PSD 目录或单个 PSD 的 JSON/截图，再结合现有设计导入链路自动生成 prefab 与脚本骨架。适用于“PSD + 正式资源目录”批量落地页面；工具会为设计稿痕迹较重的节点自动补一版候选 logic 命名方案。`,
+			inputSchema: {
+				type: "object",
+				properties: {
+					psdPath: {
+						type: "string",
+						description: "PSD 文件路径或包含多个 PSD 的目录路径。支持绝对路径和项目相对路径。",
+					},
+					prefabDir: {
+						type: "string",
+						description: "输出 prefab 目录，如 db://assets/hall/prefabs/agent。",
+					},
+					imageAssetDir: {
+						type: "string",
+						description: "单个正式图片素材目录，如 db://assets/hall/textures/agent。",
+					},
+					imageAssetDirs: {
+						type: "array",
+						description: "多个正式图片素材目录。会递归扫描 png/jpg/jpeg/webp 资源。",
+						items: { type: "string" },
+					},
+					rootPreset: {
+						type: "string",
+						description: `根节点 UI 预设。当前项目预设：${uiPolicySummary}`,
+					},
+					exportScreenshots: {
+						type: "boolean",
+						description: "是否让 psd2code-studio 额外导出截图，默认 true。",
+					},
+					includeImageData: {
+						type: "boolean",
+						description: "JSON 导出时是否保留 imageData，默认 false。",
+					},
+					overwrite: {
+						type: "boolean",
+						description: "若目标 prefab 已存在，是否覆盖。",
+					},
+				},
+				required: ["psdPath", "prefabDir"],
+			},
+		},
+		{
 			name: "import_design_layout",
-			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原尺寸和文本样式，并且只使用你提供的正式图片资源。导入前必须先形成足够的 logic 方案；工具会在命名/层级仍保留设计稿痕迹时直接拒绝导入。`,
+			description: `${globalPrecautions} 根据设计节点 JSON 直接生成更接近设计稿的 UI prefab。适用于设计师提供了结构化导出 JSON 的场景，会优先还原尺寸和文本样式，并且只使用你提供的正式图片资源。若传入 logic 缺少 propertyName/dataKey/group/handlerName 等绑定信息，工具会自动重建规则化 logic，避免占位命名落地。`,
 			inputSchema: {
 				type: "object",
 				properties: {

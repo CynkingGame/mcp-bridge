@@ -553,6 +553,72 @@ test("analyzeDesignLayoutLogicReadiness rejects generic placeholder names", () =
     );
 });
 
+test("analyzeDesignLayoutLogicReadiness rejects full component placeholder names", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "InviteView",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "group3",
+                        name: "group3",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [
+                            {
+                                id: "sprite48",
+                                name: "sprite48",
+                                type: "image",
+                                frame: { x: 40, y: 120, width: 180, height: 60 },
+                                style: {},
+                                children: [],
+                            },
+                            {
+                                id: "label69",
+                                name: "label69",
+                                type: "text",
+                                frame: { x: 40, y: 48, width: 220, height: 40 },
+                                style: {},
+                                text: {
+                                    content: "Invite Link",
+                                    font: {
+                                        family: "Arial",
+                                        size: 28,
+                                        lineHeight: 28,
+                                        align: "left",
+                                        color: { r: 255, g: 255, b: 255, a: 1 },
+                                    },
+                                },
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(normalized);
+
+    assert.equal(readiness.requiresExplicitLogic, true);
+    assert.deepEqual(
+        readiness.issues.map((issue) => issue.name),
+        ["group3", "sprite48", "label69"],
+    );
+    assert.deepEqual(
+        readiness.issues.map((issue) => issue.reason),
+        ["placeholder-generic-name", "placeholder-generic-name", "placeholder-generic-name"],
+    );
+});
+
 test("analyzeDesignLayoutLogicReadiness rejects text nodes named after their display copy", () => {
     const normalized = designJson.normalizeDesignLayoutDocument(
         {
@@ -603,6 +669,59 @@ test("analyzeDesignLayoutLogicReadiness rejects text nodes named after their dis
     assert.equal(readiness.requiresExplicitLogic, true);
     assert.equal(readiness.issues.length, 1);
     assert.equal(readiness.issues[0].id, "betRule");
+    assert.equal(readiness.issues[0].reason, "text-content-name");
+});
+
+test("analyzeDesignLayoutLogicReadiness rejects text nodes named after the leading sentence of multiline copy", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "InviteBonusView",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "rules",
+                        name: "grpRules",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [
+                            {
+                                id: "inviteRule",
+                                name: "1_Users_who_register_via_your_invite_link_will_be_bound_to_you",
+                                type: "text",
+                                frame: { x: 40, y: 48, width: 580, height: 64 },
+                                style: {},
+                                text: {
+                                    content: "1. Users who register via your invite link will be bound to you.\n2. Invite bonus is granted only for valid invites.\n3. Bets from valid invites are limited to Slot games only.",
+                                    font: {
+                                        family: "Arial",
+                                        size: 24,
+                                        lineHeight: 30,
+                                        align: "left",
+                                        color: { r: 255, g: 255, b: 255, a: 1 },
+                                    },
+                                },
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(normalized);
+
+    assert.equal(readiness.requiresExplicitLogic, true);
+    assert.equal(readiness.issues.length, 1);
+    assert.equal(readiness.issues[0].id, "inviteRule");
     assert.equal(readiness.issues[0].reason, "text-content-name");
 });
 

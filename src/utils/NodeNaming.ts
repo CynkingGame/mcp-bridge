@@ -28,6 +28,52 @@ function normalizeAsciiToken(value: string): string {
 		.replace(/^_+|_+$/g, "");
 }
 
+export function normalizeNameLiteral(input: string): string {
+	return String(input || "")
+		.normalize("NFKD")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "");
+}
+
+function extractComparableCopySegments(displayCopy: string): string[] {
+	const raw = String(displayCopy || "");
+	if (!raw.trim()) {
+		return [];
+	}
+
+	const segments = new Set<string>();
+	const pushSegment = (value: string) => {
+		const normalized = normalizeNameLiteral(value);
+		if (normalized) {
+			segments.add(normalized);
+		}
+	};
+
+	pushSegment(raw);
+	raw
+		.split(/\r?\n+/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.forEach((line) => {
+			pushSegment(line);
+			line
+				.split(/(?<=[.!?])\s+|[。！？]/)
+				.map((sentence) => sentence.trim())
+				.filter(Boolean)
+				.forEach(pushSegment);
+		});
+
+	return Array.from(segments);
+}
+
+export function isNodeNameDerivedFromDisplayCopy(nodeName: string, displayCopy: string): boolean {
+	const normalizedName = normalizeNameLiteral(nodeName);
+	if (!normalizedName) {
+		return false;
+	}
+	return extractComparableCopySegments(displayCopy).some((segment) => segment === normalizedName);
+}
+
 export function getNodeNamingPolicy(
 	policyInput?: Partial<UiPolicyConfig> | null,
 ): UiNodeNamingPolicy {

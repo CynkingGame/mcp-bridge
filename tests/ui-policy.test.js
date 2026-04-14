@@ -182,6 +182,49 @@ test("validateUiTree reports non-english node names when the policy requires eng
     assert.equal(result.findings.filter((finding) => finding.code === "node-name-non-english").length, 2);
 });
 
+test("validateUiTree reports text-copy-derived node names when the policy requires english only", () => {
+    const policy = mergeUiPolicy(getDefaultUiPolicy(), {
+        nodeNaming: {
+            englishOnly: true,
+        },
+    });
+
+    const result = validateUiTree(policy, {
+        name: "InviteBonusPage",
+        uuid: "root",
+        anchor: { x: 0.5, y: 0.5 },
+        size: { width: 720, height: 1280 },
+        hasSafeArea: false,
+        widget: {
+            isAlignTop: true,
+            isAlignBottom: true,
+            isAlignLeft: true,
+            isAlignRight: true,
+        },
+        children: [
+            {
+                name: "grpRules",
+                uuid: "group-1",
+                components: [],
+                children: [
+                    {
+                        name: "1_Users_who_register_via_your_invite_link_will_be_bound_to_you",
+                        uuid: "label-1",
+                        anchor: { x: 0.5, y: 0.5 },
+                        components: ["cc.Label"],
+                        labelText: "1. Users who register via your invite link will be bound to you.\n2. Invite bonus is granted only for valid invites.",
+                        children: [],
+                    },
+                ],
+            },
+        ],
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.findings.some((finding) => finding.code === "node-name-copy-derived"), true);
+    assert.equal(result.findings.filter((finding) => finding.code === "node-name-copy-derived").length, 1);
+});
+
 test("workflow guide mentions the recommended UI prefab toolchain", () => {
     const policy = getDefaultUiPolicy();
 
