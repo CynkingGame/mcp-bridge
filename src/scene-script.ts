@@ -358,6 +358,14 @@ const applyDefaultLabelPolicy = (label) => {
     label.overflow = cc.Label.Overflow.NONE;
 };
 
+const applyDefaultButtonPolicy = (button) => {
+    if (!button || !cc || !cc.Button || !cc.Button.Transition) {
+        return;
+    }
+    button.transition = cc.Button.Transition.SCALE;
+    button.zoomScale = 1.03;
+};
+
 const captureUiState = (node) => {
     const widget = node.getComponent(cc.Widget);
     const safeArea = node.getComponent(cc.SafeArea);
@@ -809,6 +817,66 @@ const applyDesignTextStyle = (node, textSpec, pendingLoads) => {
 
 const joinImportedDesignPath = (pathSegments, nodeName) => [...(pathSegments || []), nodeName || "DesignNode"].join(" / ");
 
+const IMPORTED_SPRITE_HOST_TAG = "__mcpImportedSpriteHost";
+
+const isImportedDesignSpriteHostNode = (node) => !!(node && node[IMPORTED_SPRITE_HOST_TAG]);
+
+const findImportedDesignSpriteHostNode = (node) => {
+    if (!node || !node.children || !node.children.length) {
+        return null;
+    }
+    return node.children.find((child) => isImportedDesignSpriteHostNode(child)) || null;
+};
+
+const buildImportedDesignSpriteHostName = (nodeName) => {
+    if (!nodeName) {
+        return "imgBgHost";
+    }
+    if (nodeName.startsWith("lab")) {
+        return `img${nodeName.slice(3)}Bg`;
+    }
+    return `${nodeName}Bg`;
+};
+
+const resolveImportedDesignSpriteTarget = (node, spec, path) => {
+    let sprite = node.getComponent(cc.Sprite);
+    if (sprite) {
+        return { hostNode: node, sprite };
+    }
+
+    sprite = node.addComponent(cc.Sprite);
+    if (sprite) {
+        return { hostNode: node, sprite };
+    }
+
+    const label = node.getComponent(cc.Label) || node.getComponent(cc.RichText);
+    if (label) {
+        let hostNode = findImportedDesignSpriteHostNode(node);
+        if (!hostNode) {
+            hostNode = new cc.Node(buildImportedDesignSpriteHostName(node.name));
+            hostNode[IMPORTED_SPRITE_HOST_TAG] = true;
+            hostNode.anchorX = 0.5;
+            hostNode.anchorY = 0.5;
+            hostNode.x = 0;
+            hostNode.y = 0;
+            hostNode.width = node.width;
+            hostNode.height = node.height;
+            hostNode.opacity = 255;
+            node.addChild(hostNode);
+            hostNode.setSiblingIndex(0);
+        }
+        sprite = hostNode.getComponent(cc.Sprite) || hostNode.addComponent(cc.Sprite);
+        if (sprite) {
+            return { hostNode, sprite };
+        }
+    }
+
+    const componentNames = (node._components || []).map((component) => cc.js.getClassName(component));
+    throw new Error(
+        `[import_design_layout] 无法为节点挂载 cc.Sprite path=${path} name=${node.name} components=${componentNames.join(",") || "none"} hasText=${!!spec.text} isButton=${!!spec.isButton}`,
+    );
+};
+
 const reconcileImportedDesignNodeSize = (node, spec, importDiagnostics, pathSegments) => {
     if (!node || !spec) {
         return;
@@ -817,7 +885,10 @@ const reconcileImportedDesignNodeSize = (node, spec, importDiagnostics, pathSegm
     const visual = spec.visual || null;
     const path = joinImportedDesignPath(pathSegments, spec.name);
     const beforeSize = captureImportedNodeSize(node);
-    const sprite = node.getComponent && node.getComponent(cc.Sprite);
+    const spriteHostNode = (node.getComponent && node.getComponent(cc.Sprite))
+        ? node
+        : findImportedDesignSpriteHostNode(node);
+    const sprite = spriteHostNode && spriteHostNode.getComponent ? spriteHostNode.getComponent(cc.Sprite) : null;
     const beforeMode = sprite ? resolveSpriteSizeModeName(sprite.sizeMode) : null;
     const beforeType = sprite ? resolveSpriteTypeName(sprite.type) : null;
     const finalPreferredMode = resolveImportedSpritePreferredMode(visual, beforeMode);
@@ -827,8 +898,8 @@ const reconcileImportedDesignNodeSize = (node, spec, importDiagnostics, pathSegm
             sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
             sprite.type = cc.Sprite.Type.SLICED;
         }
-        preserveImportedSpriteNodeSize(node, visual, spec.size, finalPreferredMode);
-        const afterSize = captureImportedNodeSize(node);
+        preserveImportedSpriteNodeSize(spriteHostNode || node, visual, spec.size, finalPreferredMode);
+        const afterSize = captureImportedNodeSize(spriteHostNode || node);
         const afterMode = sprite ? resolveSpriteSizeModeName(sprite.sizeMode) : null;
         const afterType = sprite ? resolveSpriteTypeName(sprite.type) : null;
         importDiagnostics.push({
@@ -850,7 +921,7 @@ const reconcileImportedDesignNodeSize = (node, spec, importDiagnostics, pathSegm
         });
     }
 
-    const childNodes = node.children || [];
+    const childNodes = (node.children || []).filter((child) => !isImportedDesignSpriteHostNode(child));
     const childSpecs = spec.children || [];
     const childCount = Math.max(childNodes.length, childSpecs.length);
     for (let index = 0; index < childCount; index++) {
@@ -878,14 +949,14 @@ const enqueueDesignSpriteLoad = (node, spec, pendingLoads, uiPolicy, importDiagn
     const designSize = spec && spec.size;
     const path = joinImportedDesignPath(pathSegments, spec.name);
 
-    const sprite = node.getComponent(cc.Sprite) || node.addComponent(cc.Sprite);
+    const { hostNode: spriteHostNode, sprite } = resolveImportedDesignSpriteTarget(node, spec, path);
     sprite.sizeMode =
         visual.preferredSizeMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
     sprite.type = visual.useSliced ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
 
     pendingLoads.push((done) => {
         cc.assetManager.loadAny(visual.spriteFrameUuid, (err, asset) => {
-            const beforeSize = captureImportedNodeSize(node);
+            const beforeSize = captureImportedNodeSize(spriteHostNode);
             if (!err && asset) {
                 sprite.spriteFrame = asset instanceof cc.SpriteFrame ? asset : new cc.SpriteFrame(asset);
                 const spriteModeInfo = applyPreferredSpriteSizeMode(
@@ -895,7 +966,7 @@ const enqueueDesignSpriteLoad = (node, spec, pendingLoads, uiPolicy, importDiagn
                     visual.preferredSizeMode,
                 );
                 preserveImportedSpriteNodeSize(
-                    node,
+                    spriteHostNode,
                     visual,
                     designSize,
                     spriteModeInfo.appliedPreferredMode,
@@ -920,7 +991,7 @@ const enqueueDesignSpriteLoad = (node, spec, pendingLoads, uiPolicy, importDiagn
                         spriteModeInfo.appliedPreferredMode,
                     ),
                     nodeSizeBefore: beforeSize,
-                    nodeSizeAfter: captureImportedNodeSize(node),
+                    nodeSizeAfter: captureImportedNodeSize(spriteHostNode),
                     spriteModeAfter: resolveSpriteSizeModeName(sprite.sizeMode),
                     spriteTypeAfter: resolveSpriteTypeName(sprite.type),
                 });
@@ -957,7 +1028,7 @@ const createImportedDesignNode = (spec, pendingLoads, uiPolicy, importDiagnostic
     enqueueDesignSpriteLoad(node, spec, pendingLoads, uiPolicy, importDiagnostics, pathSegments);
 
     if (spec.isButton && !node.getComponent(cc.Button)) {
-        node.addComponent(cc.Button);
+        applyDefaultButtonPolicy(node.addComponent(cc.Button));
     }
 
     (spec.children || []).forEach((childSpec) => {
@@ -1252,7 +1323,7 @@ export = {
         } else if (type === "button") {
             newNode = new cc.Node(name || "新建按钮节点");
             let sprite = newNode.addComponent(cc.Sprite);
-            newNode.addComponent(cc.Button);
+            applyDefaultButtonPolicy(newNode.addComponent(cc.Button));
 
             // 设置为 CUSTOM 模式并应用按钮专用尺寸
             sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
@@ -1746,6 +1817,10 @@ export = {
                             if (event.reply) event.reply(new Error(`添加组件失败，引擎返回 null 且未找到已有同类组件: ${componentType}`));
                             return;
                         }
+                    }
+
+                    if (component instanceof cc.Button) {
+                        applyDefaultButtonPolicy(component);
                     }
 
                     // 设置属性

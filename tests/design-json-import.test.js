@@ -118,7 +118,7 @@ test("normalizeDesignLayoutDocument prefers provided image assets over embedded 
     assert.equal(actionGroup.size.height, 79);
 
     const buttonNode = actionGroup.children.find((child) => child.name === "btn");
-    const labelNode = actionGroup.children.find((child) => child.name === "Join ₹0.10");
+    const labelNode = buttonNode.children.find((child) => child.name === "Join ₹0.10");
 
     assert.ok(buttonNode);
     assert.ok(labelNode);
@@ -133,6 +133,29 @@ test("normalizeDesignLayoutDocument prefers provided image assets over embedded 
     const embeddedButtonAsset = normalized.assetTasks.find((task) => task.nodeId === "layer_144");
     assert.equal(embeddedButtonAsset, undefined);
     assert.equal(normalized.assetTasks.some((task) => task.kind === "embedded-image"), false);
+});
+
+test("normalizeDesignLayoutDocument nests button labels under the button node", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(sampleDoc, {
+        assetOutputDir: "db://assets/textures/design/hall/PrizePanel",
+        imageAssetPaths: [
+            "db://assets/art/hall/prize/btn.png",
+            "db://assets/art/hall/prize/title.png",
+        ],
+    });
+
+    const actionGroup = normalized.root.children
+        .flatMap((child) => child.children || [])
+        .find((child) => child.name === "开始");
+    const buttonNode = actionGroup.children.find((child) => child.name === "btn");
+    const nestedLabel = buttonNode.children.find((child) => child.text && child.text.content === "Join ₹0.10");
+
+    assert.ok(buttonNode, "expected a button-like image node");
+    assert.ok(nestedLabel, "expected the button label to be re-parented under the button node");
+    assert.equal(
+        actionGroup.children.some((child) => child.text && child.text.content === "Join ₹0.10"),
+        false,
+    );
 });
 
 test("normalizeDesignLayoutDocument never exports embedded base64 images", () => {
@@ -761,6 +784,55 @@ test("applyDesignLayoutLogic rewrites node names and hierarchy around page logic
         group: "header",
     });
     assert.equal(logical.root.children[1].children[0].name, "btnClaim");
+});
+
+test("applyDesignLayoutLogic promotes handler-bound image nodes into buttons", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "页面",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "cta",
+                        name: "底图",
+                        type: "image",
+                        frame: { x: 40, y: 120, width: 200, height: 72 },
+                        style: {},
+                        children: [],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+            imageAssetMap: {
+                底图: "db://assets/hall/textures/agent/按钮-复制.png",
+            },
+        },
+    );
+
+    const logical = designJson.applyDesignLayoutLogic(normalized, {
+        rules: [
+            {
+                matchId: "cta",
+                propertyName: "claimButton",
+                handlerName: "onClaimTap",
+                group: "actions",
+            },
+        ],
+    });
+
+    assert.equal(logical.root.children[0].isButton, true);
+    assert.deepEqual(logical.root.children[0].binding, {
+        propertyName: "claimButton",
+        dataKey: undefined,
+        group: "actions",
+        handlerName: "onClaimTap",
+    });
 });
 
 test("sanitizeNodeName can convert design layer names to english-safe node names", () => {

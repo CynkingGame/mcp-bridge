@@ -48,6 +48,24 @@ test("buildPrefabScriptScaffoldSpec collects data and interaction bindings", () 
     assert.equal(spec.bindings[2].handlerName, "onInviteButtonClick");
 });
 
+test("buildPrefabScriptScaffoldSpec uses prefab script name when root node name differs", () => {
+    const spec = buildPrefabScriptScaffoldSpec("db://assets/hall/prefabs/agent/InviteBonusContent.prefab", {
+        name: "panInvBnsCt",
+        components: [],
+        children: [
+            {
+                name: "btnCopy",
+                components: ["Button"],
+                children: [],
+            },
+        ],
+    });
+
+    assert.equal(spec.className, "InviteBonusContent");
+    assert.equal(spec.rootNodeName, "panInvBnsCt");
+    assert.equal(spec.bindings[0].handlerName, "onBtnCopyButtonClick");
+});
+
 test("buildPrefabComponentScript emits properties, refreshView and click handlers", () => {
     const spec = buildPrefabScriptScaffoldSpec("db://assets/hall/prefabs/agent/InviteView.prefab", {
         name: "InviteView",

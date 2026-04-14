@@ -190,13 +190,20 @@ export function derivePrefabScriptPath(prefabPath: string): string {
 	return `${parts.join("/")}/scripts/${fileName}.ts`;
 }
 
+function deriveScriptClassName(scriptPath: string): string {
+	const normalized = String(scriptPath || "").replace(/\\/g, "/");
+	const fileName = normalized.split("/").pop() || "NewPrefab";
+	const withoutExt = fileName.replace(/\.[^.]+$/i, "");
+	return ensureIdentifierStart(toPascalCase(withoutExt) || "NewPrefab", "Node");
+}
+
 export function buildPrefabScriptScaffoldSpec(
 	prefabPath: string,
 	rootNode: PrefabScriptNodeSnapshot,
 	options?: PrefabScriptScaffoldOptions,
 ): PrefabScriptScaffoldSpec {
-	const className = ensureIdentifierStart(toPascalCase(rootNode && rootNode.name) || "NewPrefab", "Node");
 	const scriptPath = derivePrefabScriptPath(prefabPath);
+	const className = deriveScriptClassName(scriptPath);
 	const bindings: PrefabScriptBindingSpec[] = [];
 	const usedPropertyNames = new Set<string>();
 

@@ -327,8 +327,36 @@ function mapHorizontalAlign(value: string): "LEFT" | "CENTER" | "RIGHT" {
 	return "LEFT";
 }
 
-function looksLikeButton(name: string): boolean {
-	return /(btn|button|按钮)/i.test(String(name || ""));
+function looksLikeButtonToken(input: string): boolean {
+	return /(btn|button|按钮)/i.test(String(input || ""));
+}
+
+function bindingLooksButtonLike(binding?: Pick<DesignNodeBindingSpec, "propertyName" | "handlerName"> | null): boolean {
+	if (!binding) {
+		return false;
+	}
+	if (String(binding.handlerName || "").trim()) {
+		return true;
+	}
+	return /button$/i.test(String(binding.propertyName || "").trim());
+}
+
+function looksLikeButton(
+	name: string,
+	assetPath?: string | null,
+	binding?: Pick<DesignNodeBindingSpec, "propertyName" | "handlerName"> | null,
+): boolean {
+	if (bindingLooksButtonLike(binding)) {
+		return true;
+	}
+	if (looksLikeButtonToken(name)) {
+		return true;
+	}
+	if (assetPath) {
+		const assetBaseName = path.basename(String(assetPath), path.extname(String(assetPath)));
+		return looksLikeButtonToken(assetBaseName);
+	}
+	return false;
 }
 
 function normalizeFrame(frame: any): RectLike {
@@ -549,6 +577,7 @@ function normalizeNodeTree(
 	seenPaths: Set<string>,
 ): NormalizedDesignNode {
 	const effectiveFrame = computeEffectiveFrame(node);
+	const visual = createNodeVisual(node, options);
 	const size = {
 		width: Math.max(0, Math.round(effectiveFrame.width)),
 		height: Math.max(0, Math.round(effectiveFrame.height)),
@@ -574,14 +603,96 @@ function normalizeNodeTree(
 		opacity: clamp(Math.round((Number(style.opacity) || 1) * 255), 0, 255),
 		rotation: roundNumber(Number(style.rotation) || 0),
 		visible: node?.visible !== false,
-		isButton: looksLikeButton(node?.name),
+		isButton: looksLikeButton(node?.name, visual && visual.assetPath, null),
 		text: buildTextSpec(node),
-		visual: createNodeVisual(node, options),
+		visual,
 		binding: null,
 		children: (Array.isArray(node?.children) ? node.children : []).map((child) =>
 			normalizeNodeTree(child, effectiveFrame, options, tasks, seenPaths),
 		),
 	};
+}
+
+function getNodeRect(node: Pick<NormalizedDesignNode, "position" | "size">) {
+	const halfWidth = Math.max(0, Number(node.size?.width) || 0) / 2;
+	const halfHeight = Math.max(0, Number(node.size?.height) || 0) / 2;
+	const centerX = Number(node.position?.x) || 0;
+	const centerY = Number(node.position?.y) || 0;
+	return {
+		left: centerX - halfWidth,
+		right: centerX + halfWidth,
+		top: centerY + halfHeight,
+		bottom: centerY - halfHeight,
+		width: halfWidth * 2,
+		height: halfHeight * 2,
+		centerX,
+		centerY,
+	};
+}
+
+function isTextInsideButton(textNode: NormalizedDesignNode, buttonNode: NormalizedDesignNode): boolean {
+	if (!textNode?.text || !buttonNode?.isButton) {
+		return false;
+	}
+	const textRect = getNodeRect(textNode);
+	const buttonRect = getNodeRect(buttonNode);
+	if (buttonRect.width <= 0 || buttonRect.height <= 0 || textRect.width <= 0 || textRect.height <= 0) {
+		return false;
+	}
+
+	const centerInside =
+		textRect.centerX >= buttonRect.left &&
+		textRect.centerX <= buttonRect.right &&
+		textRect.centerY >= buttonRect.bottom &&
+		textRect.centerY <= buttonRect.top;
+
+	const overlapWidth = Math.max(0, Math.min(textRect.right, buttonRect.right) - Math.max(textRect.left, buttonRect.left));
+	const overlapHeight = Math.max(0, Math.min(textRect.top, buttonRect.top) - Math.max(textRect.bottom, buttonRect.bottom));
+	const overlapArea = overlapWidth * overlapHeight;
+	const textArea = textRect.width * textRect.height;
+
+	return centerInside || (textArea > 0 && overlapArea / textArea >= 0.6);
+}
+
+function nestButtonLabelsIntoHierarchy(node: NormalizedDesignNode): NormalizedDesignNode {
+	if (!node || !Array.isArray(node.children) || node.children.length === 0) {
+		return node;
+	}
+
+	const buttonCandidates = node.children.filter((child) => child && child.isButton);
+	const retainedChildren: NormalizedDesignNode[] = [];
+
+	node.children.forEach((child) => {
+		if (child && child.text && !child.isButton) {
+			let targetButton: NormalizedDesignNode | null = null;
+			let targetArea = Number.POSITIVE_INFINITY;
+			buttonCandidates.forEach((candidate) => {
+				if (!isTextInsideButton(child, candidate)) {
+					return;
+				}
+				const candidateArea = (Number(candidate.size?.width) || 0) * (Number(candidate.size?.height) || 0);
+				if (candidateArea < targetArea) {
+					targetButton = candidate;
+					targetArea = candidateArea;
+				}
+			});
+
+			if (targetButton) {
+				targetButton.children = [...(targetButton.children || []), {
+					...child,
+					position: {
+						x: roundNumber((Number(child.position?.x) || 0) - (Number(targetButton.position?.x) || 0)),
+						y: roundNumber((Number(child.position?.y) || 0) - (Number(targetButton.position?.y) || 0)),
+					},
+				}];
+				return;
+			}
+		}
+		retainedChildren.push(child);
+	});
+
+	node.children = retainedChildren.map((child) => nestButtonLabelsIntoHierarchy(child));
+	return node;
 }
 
 export function normalizeDesignImportArgs(input: DesignImportInput): DesignImportSpec {
@@ -640,7 +751,7 @@ export function normalizeDesignLayoutDocument(
 	);
 
 	return {
-		root,
+		root: nestButtonLabelsIntoHierarchy(root),
 		assetTasks,
 	};
 }
@@ -765,6 +876,11 @@ export function applyDesignLayoutLogic(
 				...(rule.handlerName ? { handlerName: rule.handlerName } : {}),
 			};
 		}
+		targetNode.isButton = looksLikeButton(
+			targetNode.name,
+			targetNode.visual && targetNode.visual.assetPath,
+			targetNode.binding,
+		);
 		if (!rule.path || !found.parent || found.parent === root && splitLogicPath(rule.path).length === 0) {
 			return;
 		}
@@ -778,7 +894,7 @@ export function applyDesignLayoutLogic(
 	});
 
 	return {
-		root,
+		root: nestButtonLabelsIntoHierarchy(root),
 		assetTasks: Array.isArray(layout.assetTasks) ? layout.assetTasks.slice() : [],
 	};
 }
