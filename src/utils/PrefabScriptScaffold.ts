@@ -317,17 +317,9 @@ function getBindingGroups(
 
 function buildBindingAssignment(binding: PrefabScriptBindingSpec): string {
 	if (binding.componentType === "cc.Sprite") {
-		return [
-			`        if (data.${binding.dataKey} !== undefined && this.${binding.propertyName}) {`,
-			`            this.${binding.propertyName}.spriteFrame = data.${binding.dataKey};`,
-			"        }",
-		].join("\n");
+		return `        this.${binding.propertyName}.spriteFrame = data?.${binding.dataKey} || null;`;
 	}
-	return [
-		`        if (data.${binding.dataKey} !== undefined && this.${binding.propertyName}) {`,
-		`            this.${binding.propertyName}.string = String(data.${binding.dataKey});`,
-		"        }",
-	].join("\n");
+	return `        this.${binding.propertyName}.string = String(data?.${binding.dataKey} || "");`;
 }
 
 function buildSetDataMethods(spec: PrefabScriptScaffoldSpec, viewDataType: string): string {
@@ -355,15 +347,10 @@ function buildRenderMethods(spec: PrefabScriptScaffoldSpec): string {
 function buildSetDataBody(spec: PrefabScriptScaffoldSpec): string {
 	const groups = getBindingGroups(spec);
 	if (groups.length === 0) {
-		return ["        if (!data) {", "            return;", "        }", "        this.viewData = data;", "        this.render();"].join(
-			"\n",
-		);
+		return ["        this.viewData = data || null;", "        this.render();"].join("\n");
 	}
 	return [
-		"        if (!data) {",
-		"            return;",
-		"        }",
-		"        this.viewData = data;",
+		"        this.viewData = data || null;",
 		...groups.map((group) => `        this.setData${group.methodSuffix}(data);`),
 		"        this.render();",
 	].join("\n");

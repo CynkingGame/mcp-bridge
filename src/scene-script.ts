@@ -293,6 +293,18 @@ const resolveSpriteTypeName = (type) => {
     return String(type);
 };
 
+const enforceSpriteTrimPolicy = (sprite) => {
+    if (!sprite || !cc || !cc.Sprite || !cc.Sprite.Type) {
+        return;
+    }
+    if (typeof sprite.trim !== "boolean") {
+        return;
+    }
+    if (sprite.type === cc.Sprite.Type.SIMPLE && sprite.trim !== false) {
+        sprite.trim = false;
+    }
+};
+
 const captureImportedNodeSize = (node) => ({
     width: Math.round(Number(node && node.width) || 0),
     height: Math.round(Number(node && node.height) || 0),
@@ -326,6 +338,7 @@ const applyPreferredSpriteSizeMode = (sprite, uiPolicy, uuid, preferredModeHint)
     const isCustom = preferredMode === "CUSTOM";
     sprite.sizeMode = isCustom ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
     sprite.type = isCustom ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
+    enforceSpriteTrimPolicy(sprite);
     return {
         textureName: (metaInfo && metaInfo.textureName) || "",
         detectedPreferredMode,
@@ -656,6 +669,7 @@ const createRepeatableFieldNode = (field) => {
     if (field.type === "sprite") {
         const sprite = fieldNode.addComponent(cc.Sprite);
         sprite.sizeMode = cc.Sprite.SizeMode.RAW;
+        enforceSpriteTrimPolicy(sprite);
         fieldNode.width = field.width || 72;
         fieldNode.height = field.height || 72;
         return fieldNode;
@@ -844,11 +858,13 @@ const buildImportedDesignSpriteHostName = (nodeName) => {
 const resolveImportedDesignSpriteTarget = (node, spec, path) => {
     let sprite = node.getComponent(cc.Sprite);
     if (sprite) {
+        enforceSpriteTrimPolicy(sprite);
         return { hostNode: node, sprite };
     }
 
     sprite = node.addComponent(cc.Sprite);
     if (sprite) {
+        enforceSpriteTrimPolicy(sprite);
         return { hostNode: node, sprite };
     }
 
@@ -870,6 +886,7 @@ const resolveImportedDesignSpriteTarget = (node, spec, path) => {
         }
         sprite = hostNode.getComponent(cc.Sprite) || hostNode.addComponent(cc.Sprite);
         if (sprite) {
+            enforceSpriteTrimPolicy(sprite);
             return { hostNode, sprite };
         }
     }
@@ -956,6 +973,7 @@ const enqueueDesignSpriteLoad = (node, spec, pendingLoads, uiPolicy, importDiagn
     sprite.sizeMode =
         visual.preferredSizeMode === "CUSTOM" ? cc.Sprite.SizeMode.CUSTOM : cc.Sprite.SizeMode.RAW;
     sprite.type = visual.useSliced ? cc.Sprite.Type.SLICED : cc.Sprite.Type.SIMPLE;
+    enforceSpriteTrimPolicy(sprite);
 
     pendingLoads.push((done) => {
         cc.assetManager.loadAny(visual.spriteFrameUuid, (err, asset) => {
@@ -1303,6 +1321,7 @@ export = {
             let sprite = newNode.addComponent(cc.Sprite);
             // 默认先用 RAW，真实赋图后会根据是否为点9自动切换
             sprite.sizeMode = cc.Sprite.SizeMode.RAW;
+            enforceSpriteTrimPolicy(sprite);
             // 为精灵设置默认尺寸
             newNode.width = 100;
             newNode.height = 100;
@@ -1330,6 +1349,7 @@ export = {
 
             // 设置为 CUSTOM 模式并应用按钮专用尺寸
             sprite.sizeMode = cc.Sprite.SizeMode.CUSTOM;
+            enforceSpriteTrimPolicy(sprite);
             newNode.width = 150;
             newNode.height = 50;
 
@@ -1738,6 +1758,13 @@ export = {
                     component[key] = finalValue;
                 }
             }
+
+            if (
+                component instanceof cc.Sprite &&
+                !Object.prototype.hasOwnProperty.call(props, "trim")
+            ) {
+                enforceSpriteTrimPolicy(component);
+            }
         };
 
         if (!node) {
@@ -1824,6 +1851,9 @@ export = {
 
                     if (component instanceof cc.Button) {
                         applyDefaultButtonPolicy(component);
+                    }
+                    if (component instanceof cc.Sprite) {
+                        enforceSpriteTrimPolicy(component);
                     }
 
                     // 设置属性

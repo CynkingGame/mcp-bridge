@@ -149,6 +149,7 @@ export interface DesignLayoutLogicIssue {
 		| "size-suffixed-name"
 		| "layer-style-name"
 		| "placeholder-generic-name"
+		| "workflow-generic-name"
 		| "text-content-name";
 }
 
@@ -984,6 +985,22 @@ function looksLikePlaceholderGenericName(name: string): boolean {
 	);
 }
 
+function looksLikeWorkflowGenericName(name: string): boolean {
+	const matched = String(name || "").match(/^(pan|grp|img|lab|btn)([A-Za-z0-9_-]*)$/);
+	if (!matched) {
+		return false;
+	}
+	const stem = String(matched[2] || "")
+		.replace(/[^A-Za-z0-9]/g, "")
+		.toLowerCase();
+	if (!stem) {
+		return true;
+	}
+	return /^(?:node|layer|value|group|container|image|icon|sprite|label|text|button|panel|item|field)\d*$/.test(
+		stem,
+	);
+}
+
 function looksLikeTextContentName(node: NormalizedDesignNode): boolean {
 	if (node.nodeType !== "text" || !node.text || !node.text.content) {
 		return false;
@@ -1032,6 +1049,13 @@ export function analyzeDesignLayoutLogicReadiness(
 				name: rawName,
 				nodeType: node.nodeType,
 				reason: "layer-style-name",
+			});
+		} else if (looksLikeWorkflowGenericName(rawName)) {
+			issues.push({
+				id: node.id,
+				name: rawName,
+				nodeType: node.nodeType,
+				reason: "workflow-generic-name",
 			});
 		}
 

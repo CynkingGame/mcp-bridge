@@ -19,6 +19,11 @@ const sampleJsonPath = path.resolve(
     "../../../agent/邀请数据/邀请数据-layer_0.json",
 );
 const sampleDoc = JSON.parse(fs.readFileSync(sampleJsonPath, "utf8"));
+const rewardSampleJsonPath = path.resolve(
+    __dirname,
+    "../../../agent/邀请奖励/邀请奖励-layer_0.json",
+);
+const rewardSampleDoc = JSON.parse(fs.readFileSync(rewardSampleJsonPath, "utf8"));
 
 test("tool registry exposes generate_ui_from_psd", () => {
     assert.equal(typeof toolRegistry.getToolsList, "function");
@@ -102,9 +107,16 @@ test("buildAutoDesignLogic creates import-ready names for problematic design nod
     assert.equal(typeof rootRule.propertyName, "string");
     assert.ok(rootRule.propertyName.length > 0);
     assert.ok(rootRule.name.length <= 14, "node names should obey workflow length limit");
+    assert.ok(logic.rules.every((rule) => typeof rule.name === "string" && rule.name.length <= 14));
 
     const hasPlaceholderNames = logic.rules.some((rule) => /^(img|txt|ctn|grp|spr|lab|lbl|btn|node|icon)[_-]?\d+$/i.test(rule.name));
     assert.equal(hasPlaceholderNames, false);
+    const hasWeakWorkflowNames = logic.rules.some((rule) =>
+        /^(?:pan|grp|img|lab|btn)(?:Node|Layer|Value|Group|Container|Image|Icon|Sprite|Label|Text|Button|Panel|Item|Field)\d*$/i.test(
+            rule.name,
+        ),
+    );
+    assert.equal(hasWeakWorkflowNames, false);
 });
 
 test("buildAutoDesignLogic reuses ascii text content for text nodes when possible", () => {
@@ -219,4 +231,16 @@ test("buildAutoDesignLogic rewrites full component placeholder names", () => {
     assert.equal(typeof spriteRule.propertyName, "string");
     assert.equal(typeof labelRule.propertyName, "string");
     assert.equal(typeof labelRule.dataKey, "string");
+});
+
+test("buildAutoDesignLogic avoids numeric value placeholder tails on real agent pages", () => {
+    const logic = psdStudioImport.buildAutoDesignLogic(rewardSampleDoc, {
+        prefabName: "AgentInviteBonusPage",
+    });
+
+    assert.ok(logic.rules.length > 0);
+    const numericValueNames = logic.rules
+        .map((rule) => rule.name)
+        .filter((name) => /^labValue\d{3,}$/i.test(name));
+    assert.deepEqual(numericValueNames, []);
 });

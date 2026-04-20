@@ -28,7 +28,7 @@ test("normalizeRepeatableUiScaffoldArgs builds default asset paths and field bin
     assert.equal(normalized.fields[1].componentGetter, "cc.Sprite");
 });
 
-test("buildRepeatableItemScript includes setData and auto node lookup", () => {
+test("buildRepeatableItemScript uses @property bindings and setData", () => {
     const normalized = normalizeRepeatableUiScaffoldArgs({
         itemName: "RewardItem",
         containerName: "RewardList",
@@ -43,9 +43,13 @@ test("buildRepeatableItemScript includes setData and auto node lookup", () => {
     const script = buildRepeatableItemScript(normalized);
 
     assert.match(script, /export default class RewardItem extends cc\.Component/);
+    assert.match(script, /@property\(cc\.Label\)/);
+    assert.match(script, /@property\(cc\.Sprite\)/);
     assert.match(script, /setData\(data: any\)/);
-    assert.match(script, /this\.titleLabel = this\.findComponent/);
-    assert.match(script, /this\.iconSprite = this\.findComponent/);
+    assert.match(script, /this\.titleLabel\.string = String\(data\?\.title \|\| ""\);/);
+    assert.match(script, /this\.iconSprite\.spriteFrame = data\?\.icon \|\| null;/);
+    assert.doesNotMatch(script, /if \(!data\)/);
+    assert.doesNotMatch(script, /findComponent/);
 });
 
 test("buildRepeatableControllerScript includes render list flow", () => {

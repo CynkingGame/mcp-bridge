@@ -89,7 +89,8 @@ test("buildPrefabComponentScript emits properties, refreshView and click handler
     assert.match(script, /@property\(cc\.Label\)/);
     assert.match(script, /private titleLabel: cc\.Label = null;/);
     assert.match(script, /refreshView\(data: any\)/);
-    assert.match(script, /this\.titleLabel\.string = String\(data\.title\)/);
+    assert.match(script, /this\.titleLabel\.string = String\(data\?\.title \|\| ""\)/);
+    assert.doesNotMatch(script, /if \(!data\)/);
     assert.match(script, /onInviteButtonClick/);
     assert.doesNotMatch(script, /bindReferences/);
     assert.doesNotMatch(script, /findComponent/);
@@ -221,7 +222,7 @@ test("buildPrefabScriptScaffoldSpec sanitizes bindings that start with digits", 
     const script = buildPrefabComponentScript(spec);
     assert.match(script, /private node672X302Sprite: cc\.Sprite = null;/);
     assert.match(script, /private node1Button: cc\.Button = null;/);
-    assert.match(script, /data\.node672X302/);
+    assert.match(script, /data\?\.node672X302/);
     assert.match(script, /onNode1ButtonClick/);
 });
 
@@ -341,7 +342,7 @@ test("buildPrefabComponentScript splits setData and render into group modules", 
     assert.match(script, /refreshView\(data: InviteViewState\) \{\n        this\.setData\(data\);\n    \}/);
     assert.ok(setDataBody, "expected a top-level setData body");
     assert.ok(renderBody, "expected a top-level render body");
-    assert.match(setDataBody[1], /this\.viewData = data;/);
+    assert.match(setDataBody[1], /this\.viewData = data \|\| null;/);
     assert.match(setDataBody[1], /this\.setDataSummary\(data\);/);
     assert.match(setDataBody[1], /this\.render\(\);/);
     assert.doesNotMatch(setDataBody[1], /\.string =/);
@@ -350,7 +351,7 @@ test("buildPrefabComponentScript splits setData and render into group modules", 
     assert.doesNotMatch(renderBody[1], /\.string =/);
     assert.match(
         script,
-        /private setDataSummary\(data: InviteViewState\) \{[\s\S]*this\.summaryTitleLabel\.string = String\(data\.summaryTitle\);[\s\S]*this\.summaryValueLabel\.string = String\(data\.summaryValue\);[\s\S]*\}/,
+        /private setDataSummary\(data: InviteViewState\) \{[\s\S]*this\.summaryTitleLabel\.string = String\(data\?\.summaryTitle \|\| ""\);[\s\S]*this\.summaryValueLabel\.string = String\(data\?\.summaryValue \|\| ""\);[\s\S]*\}/,
     );
     assert.match(script, /private renderSummary\(\) \{/);
     assert.match(script, /private renderActions\(\) \{/);

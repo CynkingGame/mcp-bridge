@@ -619,6 +619,68 @@ test("analyzeDesignLayoutLogicReadiness rejects full component placeholder names
     );
 });
 
+test("analyzeDesignLayoutLogicReadiness rejects weak workflow generic names", () => {
+    const normalized = designJson.normalizeDesignLayoutDocument(
+        {
+            node: {
+                id: "root",
+                name: "panInviteView",
+                type: "container",
+                frame: { x: 0, y: 0, width: 720, height: 1280 },
+                style: {},
+                children: [
+                    {
+                        id: "groupWeak",
+                        name: "grpNode",
+                        type: "container",
+                        frame: { x: 24, y: 120, width: 672, height: 492 },
+                        style: {},
+                        children: [
+                            {
+                                id: "labelWeak",
+                                name: "labValue2000",
+                                type: "text",
+                                frame: { x: 40, y: 48, width: 220, height: 40 },
+                                style: {},
+                                text: {
+                                    content: "2000",
+                                    font: {
+                                        family: "Arial",
+                                        size: 28,
+                                        lineHeight: 28,
+                                        align: "left",
+                                        color: { r: 255, g: 255, b: 255, a: 1 },
+                                    },
+                                },
+                                children: [],
+                            },
+                            {
+                                id: "imgWeak",
+                                name: "imgLayer300",
+                                type: "image",
+                                frame: { x: 40, y: 120, width: 180, height: 60 },
+                                style: {},
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        {
+            assetOutputDir: "db://assets/textures/design/hall/InviteView",
+        },
+    );
+
+    const readiness = designJson.analyzeDesignLayoutLogicReadiness(normalized);
+
+    assert.equal(readiness.requiresExplicitLogic, true);
+    assert.deepEqual(
+        readiness.issues.map((issue) => issue.reason),
+        ["workflow-generic-name", "workflow-generic-name", "workflow-generic-name"],
+    );
+});
+
 test("analyzeDesignLayoutLogicReadiness rejects text nodes named after their display copy", () => {
     const normalized = designJson.normalizeDesignLayoutDocument(
         {

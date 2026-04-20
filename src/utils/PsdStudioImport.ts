@@ -39,6 +39,43 @@ export interface AutoDesignLogicOptions {
 const MAX_NODE_NAME_LENGTH = 14;
 const MAX_ROOT_NAME_LENGTH = 14;
 const MAX_BINDING_STEM_LENGTH = 24;
+const WEAK_SEMANTIC_STEM_PATTERN =
+	/^(?:node|layer|value|group|container|image|icon|sprite|label|text|button|panel|item|field)\d*$/i;
+const GENERIC_SEMANTIC_TOKENS = new Set([
+	"node",
+	"nodes",
+	"layer",
+	"layers",
+	"value",
+	"values",
+	"group",
+	"groups",
+	"container",
+	"containers",
+	"image",
+	"images",
+	"img",
+	"icon",
+	"icons",
+	"sprite",
+	"sprites",
+	"label",
+	"labels",
+	"lab",
+	"text",
+	"texts",
+	"button",
+	"buttons",
+	"btn",
+	"panel",
+	"panels",
+	"item",
+	"items",
+	"field",
+	"fields",
+	"content",
+	"module",
+]);
 
 function trimSlashes(input: string): string {
 	return String(input || "").replace(/[\\/]+$/, "");
@@ -95,8 +132,42 @@ function extractIdNumber(input: string): string {
 	return matched && matched.length > 0 ? matched[matched.length - 1] : "";
 }
 
+function splitIdentifierWords(input: string): string[] {
+	const expanded = String(input || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+	return normalizeAsciiToken(expanded)
+		.split(/\s+/)
+		.filter(Boolean);
+}
+
+function extractSemanticWords(input: string, options?: { allowGeneric?: boolean }): string[] {
+	const allowGeneric = !!options?.allowGeneric;
+	return splitIdentifierWords(stripDesignNoise(input))
+		.map((word) => word.toLowerCase())
+		.filter((word) => /[a-z]/.test(word))
+		.filter((word) => allowGeneric || !GENERIC_SEMANTIC_TOKENS.has(word));
+}
+
+function toPascalFromWords(words: string[]): string {
+	return words
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join("");
+}
+
+function isWeakSemanticStem(stem: string): boolean {
+	const normalized = String(stem || "").replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+	if (!normalized) {
+		return true;
+	}
+	return WEAK_SEMANTIC_STEM_PATTERN.test(normalized);
+}
+
+function deriveSemanticStem(input: string, options?: { allowGeneric?: boolean }): string {
+	const words = extractSemanticWords(input, options);
+	return toPascalFromWords(words);
+}
+
 function deriveRootStem(prefabName: string | undefined): string {
-	const stem = toPascalCase(stripDesignNoise(String(prefabName || "")));
+	const stem = deriveSemanticStem(String(prefabName || ""), { allowGeneric: true });
 	return stem || "PsdPage";
 }
 
@@ -119,42 +190,115 @@ function ensureIdentifierStart(input: string, fallback: string): string {
 	return `n${value}`;
 }
 
-function deriveNodeStem(node: NormalizedDesignNode): string {
-	const textContent = node.text && node.text.content ? toPascalCase(stripDesignNoise(node.text.content)) : "";
-	if (node.nodeType === "text" && textContent) {
-		return /^\d+$/.test(textContent) ? `Value${textContent}` : textContent;
+function deriveSiblingSemanticStem(
+	node: NormalizedDesignNode,
+	parentNode?: NormalizedDesignNode | null,
+): string {
+	if (!parentNode || !Array.isArray(parentNode.children)) {
+		return "";
+	}
+	for (const sibling of parentNode.children) {
+		if (!sibling || sibling.id === node.id) {
+			continue;
+		}
+		const textStem =
+			sibling.text && sibling.text.content
+				? deriveSemanticStem(sibling.text.content)
+				: "";
+		if (textStem && !isWeakSemanticStem(textStem)) {
+			return textStem;
+		}
+		const nameStem = deriveSemanticStem(sibling.name);
+		if (nameStem && !isWeakSemanticStem(nameStem)) {
+			return nameStem;
+		}
+		const visualStem =
+			sibling.visual && sibling.visual.assetPath
+				? deriveSemanticStem(path.basename(String(sibling.visual.assetPath), path.extname(String(sibling.visual.assetPath))))
+				: "";
+		if (visualStem && !isWeakSemanticStem(visualStem)) {
+			return visualStem;
+		}
+	}
+	return "";
+}
+
+function deriveNodeStem(
+	node: NormalizedDesignNode,
+	options?: {
+		groupHint?: string;
+		parentNode?: NormalizedDesignNode | null;
+	},
+): string {
+	const textContentStem =
+		node.text && node.text.content
+			? deriveSemanticStem(node.text.content)
+			: "";
+	if (node.nodeType === "text" && textContentStem && !isWeakSemanticStem(textContentStem)) {
+		return textContentStem;
 	}
 
 	const visualStem =
 		node.visual && node.visual.assetPath
-			? toPascalCase(
-				stripDesignNoise(path.basename(String(node.visual.assetPath), path.extname(String(node.visual.assetPath))),
-				),
-			  )
+			? deriveSemanticStem(path.basename(String(node.visual.assetPath), path.extname(String(node.visual.assetPath))))
 			: "";
-	if (visualStem) {
-		return /^\d+$/.test(visualStem) ? `Layer${visualStem}` : visualStem;
+	if (visualStem && !isWeakSemanticStem(visualStem)) {
+		return visualStem;
+	}
+
+	const nameStem = deriveSemanticStem(node.name);
+	if (nameStem && !isWeakSemanticStem(nameStem)) {
+		return nameStem;
 	}
 
 	const childTextStem = (node.children || [])
 		.filter((child) => child && child.text && child.text.content)
-		.map((child) => toPascalCase(stripDesignNoise(child.text && child.text.content)))
-		.find((value) => !!value);
+		.map((child) => deriveSemanticStem(child.text && child.text.content))
+		.find((value) => !!value && !isWeakSemanticStem(value));
 	if (childTextStem) {
-		return /^\d+$/.test(childTextStem) ? `Layer${childTextStem}` : childTextStem;
+		return childTextStem;
 	}
 
-	const nameStem = toPascalCase(stripDesignNoise(node.name));
-	if (nameStem) {
-		return /^\d+$/.test(nameStem) ? `Layer${nameStem}` : nameStem;
+	const siblingStem = deriveSiblingSemanticStem(node, options?.parentNode);
+	if (siblingStem) {
+		if (node.isButton) {
+			return `${siblingStem}Action`;
+		}
+		if (node.nodeType === "text") {
+			return `${siblingStem}Value`;
+		}
+		if (node.nodeType === "image") {
+			return `${siblingStem}Icon`;
+		}
+		return `${siblingStem}Group`;
+	}
+
+	const groupStem = deriveSemanticStem(String(options?.groupHint || ""), { allowGeneric: true });
+	if (groupStem && !isWeakSemanticStem(groupStem)) {
+		if (node.isButton) {
+			return `${groupStem}Action`;
+		}
+		if (node.nodeType === "text") {
+			return `${groupStem}Value`;
+		}
+		if (node.nodeType === "image") {
+			return `${groupStem}Icon`;
+		}
+		return `${groupStem}Group`;
 	}
 
 	const layerNumber = extractIdNumber(node.id);
-	if (layerNumber) {
-		return `Layer${layerNumber}`;
+	const shortSuffix = layerNumber && layerNumber.length <= 2 ? layerNumber : "";
+	if (node.isButton) {
+		return `ActionButton${shortSuffix}`;
 	}
-
-	return "Node";
+	if (node.nodeType === "text") {
+		return `MetricValue${shortSuffix}`;
+	}
+	if (node.nodeType === "image") {
+		return `FeatureIcon${shortSuffix}`;
+	}
+	return `ContentGroup${shortSuffix}`;
 }
 
 function getNodePrefix(node: NormalizedDesignNode): string {
@@ -173,9 +317,28 @@ function getNodePrefix(node: NormalizedDesignNode): string {
 
 function buildNodeName(prefix: string, stem: string, maxLength = MAX_NODE_NAME_LENGTH): string {
 	const safePrefix = String(prefix || "").toLowerCase() || "grp";
-	const safeStem = toPascalCase(stripDesignNoise(stem)) || "Node";
+	let safeStem = deriveSemanticStem(stem, { allowGeneric: true }) || toPascalCase(stripDesignNoise(stem)) || "Node";
+	if (isWeakSemanticStem(safeStem)) {
+		safeStem = safePrefix === "lab" ? "Metric" : safePrefix === "img" ? "Visual" : safePrefix === "btn" ? "Action" : "Section";
+	}
 	const stemRoom = Math.max(1, maxLength - safePrefix.length);
 	return `${safePrefix}${safeStem.slice(0, stemRoom)}`;
+}
+
+function isWorkflowCompliantNodeName(node: NormalizedDesignNode): boolean {
+	const expectedPrefix = getNodePrefix(node);
+	const rawName = String(node.name || "").trim();
+	if (!rawName || rawName.length > MAX_NODE_NAME_LENGTH) {
+		return false;
+	}
+	if (!rawName.toLowerCase().startsWith(expectedPrefix)) {
+		return false;
+	}
+	const stem = rawName.slice(expectedPrefix.length);
+	if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(stem)) {
+		return false;
+	}
+	return !isWeakSemanticStem(stem);
 }
 
 function allocateUniqueName(baseName: string, usedNames: Set<string>, maxLength = MAX_NODE_NAME_LENGTH): string {
@@ -229,6 +392,9 @@ function buildPropertyName(node: NormalizedDesignNode, bindingStem: string): str
 }
 
 function shouldCreateRuleForNode(layout: NormalizedDesignLayoutDocument, node: NormalizedDesignNode): boolean {
+	if (!isWorkflowCompliantNodeName(node)) {
+		return true;
+	}
 	const readiness = analyzeDesignLayoutLogicReadiness({
 		root: {
 			...node,
@@ -248,8 +414,12 @@ function collectAutoLogicRules(
 	usedHandlerNames: Set<string>,
 	rules: DesignLayoutLogicRule[],
 	groupHint?: string,
+	parentNode?: NormalizedDesignNode | null,
 ) {
-	const stem = deriveNodeStem(node);
+	const stem = deriveNodeStem(node, {
+		groupHint,
+		parentNode,
+	});
 	const nextGroup =
 		node.nodeType === "container"
 			? ensureIdentifierStart(trimToLength(toCamelCase(stripDesignNoise(stem)), 18), groupHint || "section")
@@ -287,6 +457,7 @@ function collectAutoLogicRules(
 			usedHandlerNames,
 			rules,
 			nextGroup,
+			node,
 		),
 	);
 }

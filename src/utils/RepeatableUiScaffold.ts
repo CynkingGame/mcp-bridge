@@ -124,34 +124,22 @@ export function normalizeRepeatableUiScaffoldArgs(
 	};
 }
 
-function buildFindAssignments(spec: RepeatableUiScaffoldSpec): string {
+function buildFieldDeclarations(spec: RepeatableUiScaffoldSpec): string {
 	return spec.fields
 		.map(
 			(field) =>
-				`        this.${field.propertyName} = this.findComponent("${field.nodeName}", ${field.componentGetter});`,
+				`    @property(${field.componentGetter})\n    private ${field.propertyName}: ${field.componentGetter} = null;`,
 		)
-		.join("\n");
-}
-
-function buildFieldDeclarations(spec: RepeatableUiScaffoldSpec): string {
-	return spec.fields.map((field) => `    private ${field.propertyName}: ${field.componentGetter} = null;`).join("\n");
+		.join("\n\n");
 }
 
 function buildSetDataBody(spec: RepeatableUiScaffoldSpec): string {
 	return spec.fields
 		.map((field) => {
 			if (field.type === "label") {
-				return [
-					`        if (data.${field.name} !== undefined && this.${field.propertyName}) {`,
-					`            this.${field.propertyName}.string = String(data.${field.name});`,
-					"        }",
-				].join("\n");
+				return `        this.${field.propertyName}.string = String(data?.${field.name} || "");`;
 			}
-			return [
-				`        if (data.${field.name} && this.${field.propertyName}) {`,
-				`            this.${field.propertyName}.spriteFrame = data.${field.name};`,
-				"        }",
-			].join("\n");
+			return `        this.${field.propertyName}.spriteFrame = data?.${field.name} || null;`;
 		})
 		.join("\n");
 }
@@ -162,25 +150,13 @@ export function buildRepeatableItemScript(specInput: RepeatableUiScaffoldInput |
 			? (specInput as RepeatableUiScaffoldSpec)
 			: normalizeRepeatableUiScaffoldArgs(specInput as RepeatableUiScaffoldInput);
 
-	return `const { ccclass } = cc._decorator;
+	return `const { ccclass, property } = cc._decorator;
 
 @ccclass
 export default class ${spec.itemScriptClassName} extends cc.Component {
 ${buildFieldDeclarations(spec)}
 
-    onLoad() {
-${buildFindAssignments(spec)}
-    }
-
-    private findComponent(nodeName: string, componentType: any) {
-        const target = this.node.getChildByName(nodeName);
-        return target ? target.getComponent(componentType) : null;
-    }
-
     setData(data: any) {
-        if (!data) {
-            return;
-        }
 ${buildSetDataBody(spec)}
     }
 }
