@@ -69,14 +69,16 @@ npm run build
 
 - 插件支持项目级 UI 策略文件，用于约束 AI 创建 UI 节点和 UI 预制体时的锚点、根节点拉伸和安全区行为。
 - 同一份策略文件也可声明 `autoNineSlice` 规则：当 AI 给节点赋上名字命中规则的 `SpriteFrame` 时，插件会自动补齐缺失的 9-slice 边距。
+- MCP 工程内现在可以自带一份基础 UI policy / workflow；如果项目根目录也放了 `.agent` 同名文件，则项目级配置优先。
 - 项目级 workflow 文档也支持落在 Cocos 项目根目录，供 `cocos://ui/workflow` 直接读取。
 - MCP 还会额外暴露标准 prompts，适合把“先分析、再决策、后执行”的工作流直接前置给支持 prompts 的 AI 客户端。
 - 默认读取顺序：
-  - `packages/mcp-bridge/project-ui-policy.json`
-  - `settings/mcp-ui-policy.json`（若存在，则覆盖前者）
+  - 基线：`packages/mcp-bridge/.agent/mcp-ui-policy.json`
+  - 项目覆盖：`项目根目录/.agent/mcp-ui-policy.json`
+  - `packages/mcp-bridge/.agent/mcp-ui-policy.json`
 - workflow 默认读取顺序：
-  - `settings/mcp-ui-workflow.md`
-  - `docs/ai-ui-workflow.md`
+  - `项目根目录/.agent/ai-ui-workflow.md`
+  - `packages/mcp-bridge/.agent/ai-ui-workflow.md`
   - 若都不存在，则回退到插件内置 workflow 文案
 - 当前内置能力适合这类约束：
   - `button` 预设：按钮默认中心锚点
@@ -347,6 +349,11 @@ mcp-bridge/
 
 - **描述**: 管理材质、纹理、九宫格扫描、重复块脚手架、着色器资源
 - **参数**: `action`, `path`, `properties`/`content`
+- `manage_texture`
+  - `action: "update"` 时支持：
+    - `properties.border`: 显式传入 `[top, bottom, left, right]`
+    - `properties.borderMode: "auto"`: 按纹理长宽较小值的一半向下取整，自动生成四边 Border
+  - 当 `border` 与 `borderMode: "auto"` 同时存在时，优先使用 `border`
 
 ### 16. execute_menu_item
 

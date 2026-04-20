@@ -2,6 +2,18 @@
 
 本文件详细记录了本次开发周期内的所有功能更新、性能改进以及关键问题的修复过程。
 
+## `.agent` UI 基线与项目覆盖 (2026-04-20)
+
+### 1. MCP 工程内置基础 policy / workflow
+
+- **新增默认文件位置**: `packages/mcp-bridge/.agent/mcp-ui-policy.json` 与 `packages/mcp-bridge/.agent/ai-ui-workflow.md` 可直接作为 MCP 工程自带基线。
+- **降低分散复制**: 不再要求每个项目都先复制一份默认文件到根目录，只有项目确实需要定制时才额外放置覆盖文件。
+
+### 2. 项目级 `.agent` 覆盖优先
+
+- **项目优先级更高**: 若 Cocos 项目根目录存在 `.agent/mcp-ui-policy.json` 或 `.agent/ai-ui-workflow.md`，会优先覆盖/读取项目自己的版本。
+- **兼容旧路径**: 原有 `settings/mcp-ui-policy.json`、`settings/mcp-ui-workflow.md`、`docs/ai-ui-workflow.md`、`project-ui-policy.json`、`project-ui-workflow.md` 仍保留兼容回退，避免已有项目立即失效。
+
 ## 新增功能与工具 (2026-02-10)
 
 ### 1. `manage_shader` 工具 (新增)

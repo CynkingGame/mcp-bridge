@@ -27,11 +27,13 @@ function tryReadText(filePath: string): string | null {
 
 export function loadProjectUiPolicy(projectRoot: string, packageRoot?: string): UiPolicyConfig {
 	const resolvedPackageRoot = packageRoot || path.join(projectRoot, "packages", "mcp-bridge");
-	const settingsOverride = path.join(projectRoot, "settings", "mcp-ui-policy.json");
-	const packagePolicy = path.join(resolvedPackageRoot, "project-ui-policy.json");
+	const policyCandidates = [
+		path.join(resolvedPackageRoot, ".agent", "mcp-ui-policy.json"),
+		path.join(projectRoot, ".agent", "mcp-ui-policy.json"),
+	];
 
 	let policy = getDefaultUiPolicy();
-	for (const filePath of [packagePolicy, settingsOverride]) {
+	for (const filePath of policyCandidates) {
 		const raw = tryReadJson(filePath);
 		if (raw) {
 			policy = mergeUiPolicy(policy, raw);
@@ -44,9 +46,8 @@ export function loadProjectUiPolicy(projectRoot: string, packageRoot?: string): 
 export function loadProjectUiWorkflow(projectRoot: string, packageRoot?: string): string {
 	const resolvedPackageRoot = packageRoot || path.join(projectRoot, "packages", "mcp-bridge");
 	const workflowCandidates = [
-		path.join(projectRoot, "settings", "mcp-ui-workflow.md"),
-		path.join(projectRoot, "docs", "ai-ui-workflow.md"),
-		path.join(resolvedPackageRoot, "project-ui-workflow.md"),
+		path.join(projectRoot, ".agent", "ai-ui-workflow.md"),
+		path.join(resolvedPackageRoot, ".agent", "ai-ui-workflow.md"),
 	];
 
 	for (const filePath of workflowCandidates) {

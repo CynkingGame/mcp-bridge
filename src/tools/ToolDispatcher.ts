@@ -34,6 +34,7 @@ import {
 } from "../utils/NodeNaming";
 import { resolveProjectFontAssetUuid } from "../utils/FontAssetResolver";
 import { disableSpriteFrameTrim } from "../utils/TextureMeta";
+import { resolveManageTextureBorder } from "../utils/AutoNineSlice";
 import {
 	buildAutoDesignLogic,
 	collectGeneratedJsonFiles,
@@ -2851,6 +2852,10 @@ CCProgram fs %{
 
 				let changed = false;
 				if (properties) {
+					const subKeys = Object.keys(meta.subMetas || {});
+					const subMeta = subKeys.length > 0 ? meta.subMetas[subKeys[0]] : null;
+					const newBorder = resolveManageTextureBorder(properties, meta, subMeta);
+
 					// 更新类型
 					if (properties.type) {
 						if (meta.type !== properties.type) {
@@ -2860,11 +2865,15 @@ CCProgram fs %{
 					}
 
 					// 更新 9-slice border
-					if (properties.border) {
+					if (newBorder) {
 						// 确保类型是 sprite
 						if (meta.type !== "sprite") {
 							meta.type = "sprite";
 							changed = true;
+						}
+
+						if (!subMeta) {
+							return callback(`纹理缺少 subMetas，无法设置 9-slice: ${path}`);
 						}
 
 						// 找到 SubMeta
@@ -2872,43 +2881,29 @@ CCProgram fs %{
 						// 注意：Cocos 2.x 的 meta 结构因版本而异，旧版可能使用 border: [t, b, l, r] 数组，
 						// 而新版 (如 2.3.x+) 通常使用 borderTop, borderBottom 等独立字段。
 						// 此处逻辑实现了兼容性处理。
-						const subKeys = Object.keys(meta.subMetas);
-						if (subKeys.length > 0) {
-							const subMeta = meta.subMetas[subKeys[0]];
-							const newBorder = properties.border; // [top, bottom, left, right]
-
-							// 方式 1: standard array style
-							if (subMeta.border !== undefined) {
-								const oldBorder = subMeta.border;
-								if (
-									!oldBorder ||
-									oldBorder[0] !== newBorder[0] ||
-									oldBorder[1] !== newBorder[1] ||
-									oldBorder[2] !== newBorder[2] ||
-									oldBorder[3] !== newBorder[3]
-								) {
-									subMeta.border = newBorder;
-									changed = true;
-								}
+						// 方式 1: standard array style
+						if (subMeta.border !== undefined) {
+							const oldBorder = subMeta.border;
+							if (
+								!oldBorder ||
+								oldBorder[0] !== newBorder[0] ||
+								oldBorder[1] !== newBorder[1] ||
+								oldBorder[2] !== newBorder[2] ||
+								oldBorder[3] !== newBorder[3]
+							) {
+								subMeta.border = newBorder;
+								changed = true;
 							}
-							// 方式 2: individual fields style (common in 2.3.x)
-							else if (subMeta.borderTop !== undefined) {
-								// top, bottom, left, right
-								if (
-									subMeta.borderTop !== newBorder[0] ||
-									subMeta.borderBottom !== newBorder[1] ||
-									subMeta.borderLeft !== newBorder[2] ||
-									subMeta.borderRight !== newBorder[3]
-								) {
-									subMeta.borderTop = newBorder[0];
-									subMeta.borderBottom = newBorder[1];
-									subMeta.borderLeft = newBorder[2];
-									subMeta.borderRight = newBorder[3];
-									changed = true;
-								}
-							}
-							// 方式 3: 如果都没有，尝试写入 individual fields
-							else {
+						}
+						// 方式 2: individual fields style (common in 2.3.x)
+						else if (subMeta.borderTop !== undefined) {
+							// top, bottom, left, right
+							if (
+								subMeta.borderTop !== newBorder[0] ||
+								subMeta.borderBottom !== newBorder[1] ||
+								subMeta.borderLeft !== newBorder[2] ||
+								subMeta.borderRight !== newBorder[3]
+							) {
 								subMeta.borderTop = newBorder[0];
 								subMeta.borderBottom = newBorder[1];
 								subMeta.borderLeft = newBorder[2];
@@ -2916,6 +2911,18 @@ CCProgram fs %{
 								changed = true;
 							}
 						}
+						// 方式 3: 如果都没有，尝试写入 individual fields
+						else {
+							subMeta.borderTop = newBorder[0];
+							subMeta.borderBottom = newBorder[1];
+							subMeta.borderLeft = newBorder[2];
+							subMeta.borderRight = newBorder[3];
+							changed = true;
+						}
+					}
+
+					if (properties.borderMode === "auto" && !newBorder) {
+						return callback(`无法根据纹理尺寸自动生成 9-slice Border: ${path}`);
 					}
 				}
 

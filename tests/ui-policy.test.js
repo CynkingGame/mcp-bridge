@@ -13,7 +13,7 @@ const {
 } = require("../dist/utils/UiPolicy.js");
 const { validateUiTree } = require("../dist/utils/UiPolicyValidation.js");
 const { buildUiPolicyWorkflowGuide } = require("../dist/utils/UiPolicyPrompt.js");
-const { loadProjectUiWorkflow } = require("../dist/utils/UiPolicyLoader.js");
+const { loadProjectUiPolicy, loadProjectUiWorkflow } = require("../dist/utils/UiPolicyLoader.js");
 const { McpWrappers } = require("../dist/core/McpWrappers.js");
 
 test("buttons default to center anchor through the button preset", () => {
@@ -259,20 +259,56 @@ test("prompt list exposes workflow guardrails and design planner prompts", () =>
     assert.ok(names.includes("design-import-planner"));
 });
 
-test("project workflow file overrides the package default workflow", () => {
+test("project .agent policy overrides the package .agent default", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-ui-policy-"));
+    const projectRoot = path.join(tempRoot, "project");
+    const packageRoot = path.join(projectRoot, "packages", "mcp-bridge");
+    const projectAgentDir = path.join(projectRoot, ".agent");
+    const packageAgentDir = path.join(packageRoot, ".agent");
+
+    fs.mkdirSync(projectAgentDir, { recursive: true });
+    fs.mkdirSync(packageAgentDir, { recursive: true });
+
+    fs.writeFileSync(
+        path.join(packageAgentDir, "mcp-ui-policy.json"),
+        JSON.stringify({
+            createNode: {
+                defaultPresetsByType: {
+                    button: "button",
+                },
+            },
+        }),
+        "utf8",
+    );
+    fs.writeFileSync(
+        path.join(projectAgentDir, "mcp-ui-policy.json"),
+        JSON.stringify({
+            createNode: {
+                defaultPresetsByType: {
+                    button: "safe-area-root",
+                },
+            },
+        }),
+        "utf8",
+    );
+
+    const policy = loadProjectUiPolicy(projectRoot, packageRoot);
+
+    assert.equal(policy.createNode.defaultPresetsByType.button, "safe-area-root");
+});
+
+test("project .agent workflow overrides the package .agent default workflow", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-ui-workflow-"));
     const projectRoot = path.join(tempRoot, "project");
     const packageRoot = path.join(projectRoot, "packages", "mcp-bridge");
-    const settingsDir = path.join(projectRoot, "settings");
-    const docsDir = path.join(projectRoot, "docs");
+    const projectAgentDir = path.join(projectRoot, ".agent");
+    const packageAgentDir = path.join(packageRoot, ".agent");
 
-    fs.mkdirSync(packageRoot, { recursive: true });
-    fs.mkdirSync(settingsDir, { recursive: true });
-    fs.mkdirSync(docsDir, { recursive: true });
+    fs.mkdirSync(projectAgentDir, { recursive: true });
+    fs.mkdirSync(packageAgentDir, { recursive: true });
 
-    fs.writeFileSync(path.join(packageRoot, "project-ui-policy.json"), JSON.stringify(getDefaultUiPolicy()), "utf8");
-    fs.writeFileSync(path.join(packageRoot, "project-ui-workflow.md"), "# package fallback", "utf8");
-    fs.writeFileSync(path.join(docsDir, "ai-ui-workflow.md"), "# project workflow", "utf8");
+    fs.writeFileSync(path.join(packageAgentDir, "ai-ui-workflow.md"), "# package fallback", "utf8");
+    fs.writeFileSync(path.join(projectAgentDir, "ai-ui-workflow.md"), "# project workflow", "utf8");
 
     const workflow = loadProjectUiWorkflow(projectRoot, packageRoot);
 

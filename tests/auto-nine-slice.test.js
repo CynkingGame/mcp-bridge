@@ -2,10 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+    deriveAutoNineSliceBorder,
     getDefaultAutoNineSlicePolicy,
     normalizeAutoNineSlicePolicy,
+    resolveManageTextureBorder,
     resolveAutoNineSliceRule,
     resolvePreferredSpriteSizeMode,
+    resolveTextureSizeForNineSlice,
     readConfiguredNineSliceBorder,
     hasProcessedAutoNineSliceMarker,
     markAutoNineSliceProcessed,
@@ -43,6 +46,60 @@ test("auto derives border for 点9 textures from the smaller texture side", () =
     assert.ok(resolved);
     assert.equal(resolved.pattern, "点9");
     assert.deepEqual(resolved.border, [24, 24, 24, 24]);
+});
+
+test("resolveTextureSizeForNineSlice prefers raw dimensions from subMeta", () => {
+    const size = resolveTextureSizeForNineSlice(
+        { width: 100, height: 200 },
+        { rawWidth: 48, rawHeight: 60, width: 30, height: 40 },
+    );
+
+    assert.deepEqual(size, { width: 48, height: 60 });
+});
+
+test("resolveTextureSizeForNineSlice falls back to meta dimensions", () => {
+    const size = resolveTextureSizeForNineSlice(
+        { width: 31, height: 41 },
+        {},
+    );
+
+    assert.deepEqual(size, { width: 31, height: 41 });
+});
+
+test("deriveAutoNineSliceBorder floors odd texture sizes", () => {
+    const border = deriveAutoNineSliceBorder({ width: 31, height: 41 });
+
+    assert.deepEqual(border, [15, 15, 15, 15]);
+});
+
+test("resolveManageTextureBorder prefers explicit border over auto mode", () => {
+    const border = resolveManageTextureBorder(
+        { border: [9, 9, 9, 9], borderMode: "auto" },
+        { width: 48, height: 60 },
+        { rawWidth: 48, rawHeight: 60 },
+    );
+
+    assert.deepEqual(border, [9, 9, 9, 9]);
+});
+
+test("resolveManageTextureBorder derives border from meta when borderMode is auto", () => {
+    const border = resolveManageTextureBorder(
+        { borderMode: "auto" },
+        { width: 48, height: 60 },
+        { rawWidth: 48, rawHeight: 60 },
+    );
+
+    assert.deepEqual(border, [24, 24, 24, 24]);
+});
+
+test("resolveManageTextureBorder returns null when auto mode has no usable size", () => {
+    const border = resolveManageTextureBorder(
+        { borderMode: "auto" },
+        {},
+        {},
+    );
+
+    assert.equal(border, null);
 });
 
 test("点9 textures prefer auto-derived border over configured rule borders", () => {

@@ -580,7 +580,23 @@ export const getToolsList = () => {
 						description: "操作类型",
 					},
 					path: { type: "string", description: "纹理路径，如 db://assets/textures/NewTexture.png" },
-					properties: { type: "object", description: "纹理属性" },
+					properties: {
+						type: "object",
+						description: "纹理属性",
+						properties: {
+							type: { type: "string", description: "资源类型，如 sprite" },
+							border: {
+								type: "array",
+								items: { type: "number" },
+								description: "9-slice border，顺序为 [top, bottom, left, right]",
+							},
+							borderMode: {
+								type: "string",
+								enum: ["auto"],
+								description: "自动按纹理短边的一半向下取整生成四边 border",
+							},
+						},
+					},
 				},
 				required: ["action", "path"],
 			},

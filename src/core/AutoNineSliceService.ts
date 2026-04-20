@@ -11,6 +11,7 @@ import {
 	normalizeAutoNineSlicePolicy,
 	readConfiguredNineSliceBorder,
 	resolveAutoNineSliceRule,
+	resolveTextureSizeForNineSlice,
 } from "../utils/AutoNineSlice";
 import { loadProjectUiPolicyForCurrentEditor } from "../utils/UiPolicyLoader";
 
@@ -99,45 +100,6 @@ function getPrimarySubMeta(meta: any): Record<string, any> | null {
 	return firstEntry ? meta.subMetas[firstEntry] : null;
 }
 
-function resolveTextureSize(
-	meta: any,
-	subMeta?: Record<string, any> | null,
-): {
-	width: number;
-	height: number;
-} | null {
-	const candidates = [
-		{
-			width: subMeta && subMeta.rawWidth,
-			height: subMeta && subMeta.rawHeight,
-		},
-		{
-			width: subMeta && subMeta.width,
-			height: subMeta && subMeta.height,
-		},
-		{
-			width: meta && meta.width,
-			height: meta && meta.height,
-		},
-	];
-	for (const candidate of candidates) {
-		if (
-			typeof candidate.width === "number" &&
-			Number.isFinite(candidate.width) &&
-			candidate.width > 0 &&
-			typeof candidate.height === "number" &&
-			Number.isFinite(candidate.height) &&
-			candidate.height > 0
-		) {
-			return {
-				width: candidate.width,
-				height: candidate.height,
-			};
-		}
-	}
-	return null;
-}
-
 function applyBorderToSubMeta(subMeta: Record<string, any>, border: [number, number, number, number]) {
 	if (subMeta.border !== undefined) {
 		subMeta.border = border;
@@ -183,7 +145,7 @@ function ensureTexture(
 	if (!subMeta) {
 		return callback(`纹理缺少 subMetas，无法设置 9-slice: ${texture.textureUrl}`);
 	}
-	const textureSize = resolveTextureSize(meta, subMeta);
+	const textureSize = resolveTextureSizeForNineSlice(meta, subMeta);
 	const rule =
 		resolveAutoNineSliceRule(context.policy, texture.textureName, textureSize) || matchedConfiguredRule;
 	if (!rule) {

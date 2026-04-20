@@ -28,6 +28,11 @@ export interface TextureSizeLike {
 	height?: number | null;
 }
 
+export interface ManageTextureBorderProperties {
+	border?: NineSliceBorder | null;
+	borderMode?: string | null;
+}
+
 const AUTO_NINE_SLICE_NAME_MARKER = "点9";
 
 const DEFAULT_AUTO_NINE_SLICE_POLICY: AutoNineSlicePolicy = {
@@ -126,15 +131,45 @@ export function isAutoNineSliceTextureName(textureName: string): boolean {
 }
 
 export function deriveAutoNineSliceBorder(textureSize?: TextureSizeLike | null): NineSliceBorder | null {
-	if (!textureSize) {
+	const size = resolveTextureSizeForNineSlice(textureSize);
+	if (!size) {
 		return null;
 	}
-	const { width, height } = textureSize;
-	if (!isPositiveTextureDimension(width) || !isPositiveTextureDimension(height)) {
-		return null;
-	}
-	const inset = Math.floor(Math.min(width, height) / 2);
+	const inset = Math.floor(Math.min(size.width, size.height) / 2);
 	return [inset, inset, inset, inset];
+}
+
+export function resolveTextureSizeForNineSlice(
+	meta?: TextureSizeLike | null,
+	subMeta?: Record<string, any> | null,
+): { width: number; height: number } | null {
+	const candidates = [
+		{ width: subMeta && subMeta.rawWidth, height: subMeta && subMeta.rawHeight },
+		{ width: subMeta && subMeta.width, height: subMeta && subMeta.height },
+		{ width: meta && meta.width, height: meta && meta.height },
+	];
+
+	for (const candidate of candidates) {
+		if (isPositiveTextureDimension(candidate.width) && isPositiveTextureDimension(candidate.height)) {
+			return { width: candidate.width, height: candidate.height };
+		}
+	}
+	return null;
+}
+
+export function resolveManageTextureBorder(
+	properties?: ManageTextureBorderProperties | null,
+	meta?: TextureSizeLike | null,
+	subMeta?: Record<string, any> | null,
+): NineSliceBorder | null {
+	if (properties && isBorderValueValid(properties.border)) {
+		return cloneValue(properties.border);
+	}
+	if (!properties || properties.borderMode !== "auto") {
+		return null;
+	}
+	const size = resolveTextureSizeForNineSlice(meta, subMeta);
+	return deriveAutoNineSliceBorder(size);
 }
 
 export function resolveAutoNineSliceRule(
