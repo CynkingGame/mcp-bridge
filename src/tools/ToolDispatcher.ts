@@ -34,7 +34,7 @@ import {
 } from "../utils/NodeNaming";
 import { resolveProjectFontAssetUuid } from "../utils/FontAssetResolver";
 import { disableSpriteFrameTrim } from "../utils/TextureMeta";
-import { resolveManageTextureBorder } from "../utils/AutoNineSlice";
+import { resolveManageTextureBorder, selectTextureMetaCandidateForAutoBorder } from "../utils/AutoNineSlice";
 import {
 	buildAutoDesignLogic,
 	collectGeneratedJsonFiles,
@@ -922,10 +922,21 @@ export class ToolDispatcher {
 		if (!uuid) {
 			return null;
 		}
-		let meta = Editor.assetdb.loadMeta(uuid);
-		if (meta) {
-			return { uuid, meta };
+		const runtimeMeta = Editor.assetdb.loadMeta(uuid);
+		const fileMeta = ToolDispatcher._readAssetMetaFromFs(assetPath);
+		if (ToolDispatcher._isTextureAssetPath(assetPath) && fileMeta) {
+			return { uuid, meta: fileMeta };
 		}
+		if (runtimeMeta) {
+			return { uuid, meta: runtimeMeta };
+		}
+		if (fileMeta) {
+			return { uuid, meta: fileMeta };
+		}
+		return null;
+	}
+
+  static _readAssetMetaFromFs(assetPath) {
 		try {
 			const fsPath = Editor.assetdb.urlToFspath(assetPath);
 			if (!fsPath) {
@@ -935,11 +946,45 @@ export class ToolDispatcher {
 			if (!fs.existsSync(metaPath)) {
 				return null;
 			}
-			meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-			return meta ? { uuid, meta } : null;
+			return JSON.parse(fs.readFileSync(metaPath, "utf8"));
 		} catch (_error) {
 			return null;
 		}
+	}
+
+  static _getPrimarySubMeta(meta) {
+		if (!meta || !meta.subMetas || typeof meta.subMetas !== "object") {
+			return null;
+		}
+		const firstEntry = Object.keys(meta.subMetas)[0];
+		return firstEntry ? meta.subMetas[firstEntry] : null;
+	}
+
+  static _resolveTextureMetaForUpdate(assetPath, runtimeMeta, preferAutoBorderSource = false) {
+		const runtimeCandidate = {
+			meta: runtimeMeta,
+			subMeta: ToolDispatcher._getPrimarySubMeta(runtimeMeta),
+		};
+		const fileMeta = ToolDispatcher._readAssetMetaFromFs(assetPath);
+		const fileCandidate = {
+			meta: fileMeta,
+			subMeta: ToolDispatcher._getPrimarySubMeta(fileMeta),
+		};
+
+		if (preferAutoBorderSource) {
+			const selected = selectTextureMetaCandidateForAutoBorder([fileCandidate, runtimeCandidate]);
+			if (selected && selected.meta) {
+				return selected;
+			}
+		}
+
+		if (runtimeCandidate.meta && runtimeCandidate.subMeta) {
+			return runtimeCandidate;
+		}
+		if (fileCandidate.meta) {
+			return fileCandidate;
+		}
+		return runtimeCandidate.meta ? runtimeCandidate : null;
 	}
 
   static _forceTextureTrimNone(assetPath, callback) {
@@ -2760,29 +2805,48 @@ CCProgram fs %{
 
 				AssetPatcher.safeCreateAsset(path, textureBuffer, callback, (doneCreate) => {
 					// 如果有 9-slice 等附加属性配置，更新 Meta
-					if (properties && (properties.border || properties.type)) {
+					if (properties && (properties.border || properties.type || properties.borderMode === "auto")) {
 						const uuid = Editor.assetdb.urlToUuid(path);
 						if (!uuid) return doneCreate(null, `纹理已创建，但未能立即获取 UUID。`);
 
 						// 稍微延迟确保刚在内存中创建完的 Meta 对象可读
 						setTimeout(() => {
-							const meta = Editor.assetdb.loadMeta(uuid);
-							if (meta) {
+							const runtimeMeta = Editor.assetdb.loadMeta(uuid);
+							const selectedMetaState = ToolDispatcher._resolveTextureMetaForUpdate(
+								path,
+								runtimeMeta,
+								properties.borderMode === "auto",
+							);
+							if (selectedMetaState && selectedMetaState.meta) {
+								const meta = selectedMetaState.meta;
+								const subMeta = selectedMetaState.subMeta;
+								const newBorder = resolveManageTextureBorder(properties, meta, subMeta);
 								let changed = false;
-								if (properties.type) {
+								if (properties.type && meta.type !== properties.type) {
 									meta.type = properties.type;
 									changed = true;
 								}
 
-								// 设置 9-slice (border)
-								if (properties.border) {
+								if (newBorder) {
 									meta.type = "sprite";
-									const subKeys = Object.keys(meta.subMetas);
-									if (subKeys.length > 0) {
-										const subMeta = meta.subMetas[subKeys[0]];
-										subMeta.border = properties.border;
-										changed = true;
+									if (!subMeta) {
+										doneCreate(null, `纹理已创建，但缺少 subMetas，无法设置 9-slice: ${path}`);
+										return;
 									}
+									if (subMeta.border !== undefined) {
+										subMeta.border = newBorder;
+									} else {
+										subMeta.borderTop = newBorder[0];
+										subMeta.borderBottom = newBorder[1];
+										subMeta.borderLeft = newBorder[2];
+										subMeta.borderRight = newBorder[3];
+									}
+									changed = true;
+								}
+
+								if (properties.borderMode === "auto" && !newBorder) {
+									doneCreate(null, `纹理已创建，但无法根据纹理尺寸自动生成 9-slice Border: ${path}`);
+									return;
 								}
 
 								if (changed) {
@@ -2829,31 +2893,20 @@ CCProgram fs %{
 					return callback(`找不到纹理: ${path}`);
 				}
 				const uuid = Editor.assetdb.urlToUuid(path);
-				let meta = Editor.assetdb.loadMeta(uuid);
-
-				// Fallback: 如果 Editor.assetdb.loadMeta 失败 (API 偶尔不稳定)，尝试直接读取文件系统中的 .meta 文件
-				if (!meta) {
-					try {
-						const fspath = Editor.assetdb.urlToFspath(path);
-						const metaPath = fspath + ".meta";
-						if (fs.existsSync(metaPath)) {
-							const metaContent = fs.readFileSync(metaPath, "utf-8");
-							meta = JSON.parse(metaContent);
-							// addLog("info", `[manage_texture] Loaded meta from fs fallback: ${metaPath}`);
-						}
-					} catch (e) {
-						// addLog("warn", `[manage_texture] Meta fs fallback failed: ${e.message}`);
-					}
-				}
-
+				const runtimeMeta = Editor.assetdb.loadMeta(uuid);
+				const selectedMetaState = ToolDispatcher._resolveTextureMetaForUpdate(
+					path,
+					runtimeMeta,
+					properties && properties.borderMode === "auto",
+				);
+				let meta = selectedMetaState && selectedMetaState.meta;
 				if (!meta) {
 					return callback(`加载资源 Meta 失败: ${path}`);
 				}
 
 				let changed = false;
 				if (properties) {
-					const subKeys = Object.keys(meta.subMetas || {});
-					const subMeta = subKeys.length > 0 ? meta.subMetas[subKeys[0]] : null;
+					const subMeta = (selectedMetaState && selectedMetaState.subMeta) || ToolDispatcher._getPrimarySubMeta(meta);
 					const newBorder = resolveManageTextureBorder(properties, meta, subMeta);
 
 					// 更新类型

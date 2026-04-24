@@ -8,6 +8,7 @@ const {
     resolveManageTextureBorder,
     resolveAutoNineSliceRule,
     resolvePreferredSpriteSizeMode,
+    selectTextureMetaCandidateForAutoBorder,
     resolveTextureSizeForNineSlice,
     readConfiguredNineSliceBorder,
     hasProcessedAutoNineSliceMarker,
@@ -100,6 +101,40 @@ test("resolveManageTextureBorder returns null when auto mode has no usable size"
     );
 
     assert.equal(border, null);
+});
+
+test("selectTextureMetaCandidateForAutoBorder prefers fallback meta with usable size", () => {
+    const candidate = selectTextureMetaCandidateForAutoBorder([
+        {
+            meta: { type: "sprite" },
+            subMeta: { importer: "sprite-frame" },
+        },
+        {
+            meta: { width: 48, height: 60, type: "sprite" },
+            subMeta: { rawWidth: 48, rawHeight: 60, importer: "sprite-frame" },
+        },
+    ]);
+
+    assert.ok(candidate);
+    assert.deepEqual(candidate.meta, { width: 48, height: 60, type: "sprite" });
+    assert.deepEqual(candidate.subMeta, { rawWidth: 48, rawHeight: 60, importer: "sprite-frame" });
+});
+
+test("selectTextureMetaCandidateForAutoBorder falls back to first candidate with subMeta when no size exists", () => {
+    const candidate = selectTextureMetaCandidateForAutoBorder([
+        {
+            meta: { type: "sprite" },
+            subMeta: { importer: "sprite-frame" },
+        },
+        {
+            meta: { type: "sprite", subMetas: {} },
+            subMeta: null,
+        },
+    ]);
+
+    assert.ok(candidate);
+    assert.deepEqual(candidate.meta, { type: "sprite" });
+    assert.deepEqual(candidate.subMeta, { importer: "sprite-frame" });
 });
 
 test("点9 textures prefer auto-derived border over configured rule borders", () => {

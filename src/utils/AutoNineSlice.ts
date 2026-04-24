@@ -33,6 +33,11 @@ export interface ManageTextureBorderProperties {
 	borderMode?: string | null;
 }
 
+export interface TextureMetaCandidate<TMeta = TextureSizeLike | null, TSubMeta = Record<string, any> | null> {
+	meta?: TMeta | null;
+	subMeta?: TSubMeta | null;
+}
+
 const AUTO_NINE_SLICE_NAME_MARKER = "点9";
 
 const DEFAULT_AUTO_NINE_SLICE_POLICY: AutoNineSlicePolicy = {
@@ -170,6 +175,32 @@ export function resolveManageTextureBorder(
 	}
 	const size = resolveTextureSizeForNineSlice(meta, subMeta);
 	return deriveAutoNineSliceBorder(size);
+}
+
+export function selectTextureMetaCandidateForAutoBorder<T extends TextureMetaCandidate>(
+	candidates?: T[] | null,
+): T | null {
+	const normalized = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+
+	for (const candidate of normalized) {
+		if (resolveTextureSizeForNineSlice(candidate.meta, candidate.subMeta)) {
+			return candidate;
+		}
+	}
+
+	for (const candidate of normalized) {
+		if (candidate.meta && candidate.subMeta) {
+			return candidate;
+		}
+	}
+
+	for (const candidate of normalized) {
+		if (candidate.meta) {
+			return candidate;
+		}
+	}
+
+	return null;
 }
 
 export function resolveAutoNineSliceRule(

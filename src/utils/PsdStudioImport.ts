@@ -173,10 +173,18 @@ function deriveRootStem(prefabName: string | undefined): string {
 
 function trimToLength(input: string, maxLength: number): string {
 	const value = String(input || "");
-	if (!value) {
+	if (!value || value.length <= maxLength) {
 		return value;
 	}
-	return value.length > maxLength ? value.slice(0, maxLength) : value;
+	// 在 camelCase/PascalCase 单词边界处截断，保证单词完整性
+	const truncated = value.slice(0, maxLength);
+	// 从末尾向前查找最近的大写字母边界（camelCase 单词起始位置）
+	for (let i = truncated.length - 1; i > 0; i--) {
+		if (/[A-Z]/.test(truncated[i])) {
+			return truncated.slice(0, i);
+		}
+	}
+	return truncated;
 }
 
 function ensureIdentifierStart(input: string, fallback: string): string {
@@ -422,7 +430,7 @@ function collectAutoLogicRules(
 	});
 	const nextGroup =
 		node.nodeType === "container"
-			? ensureIdentifierStart(trimToLength(toCamelCase(stripDesignNoise(stem)), 18), groupHint || "section")
+			? ensureIdentifierStart(trimToLength(toCamelCase(stripDesignNoise(stem)), 22), groupHint || "section")
 			: groupHint;
 
 	if (shouldCreateRuleForNode(layout, node)) {

@@ -11,6 +11,7 @@ import {
 	normalizeAutoNineSlicePolicy,
 	readConfiguredNineSliceBorder,
 	resolveAutoNineSliceRule,
+	selectTextureMetaCandidateForAutoBorder,
 	resolveTextureSizeForNineSlice,
 } from "../utils/AutoNineSlice";
 import { loadProjectUiPolicyForCurrentEditor } from "../utils/UiPolicyLoader";
@@ -74,22 +75,23 @@ function resolveTextureDescriptor(uuid: string): TextureDescriptor | null {
 }
 
 function loadTextureMeta(texture: TextureDescriptor): any | null {
-	let meta = Editor.assetdb.loadMeta(texture.textureUuid);
-	if (meta) {
-		return meta;
-	}
-
+	const runtimeMeta = Editor.assetdb.loadMeta(texture.textureUuid);
+	let fileMeta = null;
 	try {
 		const fspath = Editor.assetdb.urlToFspath(texture.textureUrl);
 		const metaPath = `${fspath}.meta`;
 		if (fs.existsSync(metaPath)) {
-			return JSON.parse(fs.readFileSync(metaPath, "utf8"));
+			fileMeta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
 		}
 	} catch (_error) {
-		return null;
+		fileMeta = null;
 	}
 
-	return null;
+	const selected = selectTextureMetaCandidateForAutoBorder([
+		{ meta: fileMeta, subMeta: getPrimarySubMeta(fileMeta) },
+		{ meta: runtimeMeta, subMeta: getPrimarySubMeta(runtimeMeta) },
+	]);
+	return (selected && selected.meta) || runtimeMeta || fileMeta || null;
 }
 
 function getPrimarySubMeta(meta: any): Record<string, any> | null {
